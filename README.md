@@ -1,43 +1,161 @@
-# dsh-message
+<p align="center">
+  <img src="./assets/logo.png" width="148" alt="dsh-message Logo">
+</p>
 
-`dsh-message` 是面向 DeepSeek Harness 的统一消息接入插件，仅包含微信、飞书、QQ、企业微信和钉钉。项目采用一套 Host/Client 插件、统一设置页和统一 HTTP Harness 会话链路，并在五个渠道上共享提示词、长期记忆和会话策略。
+<h1 align="center">DSH Message</h1>
 
-## 功能
+<p align="center">
+  <strong>让每一个消息入口，都连接到同一个 DeepSeek Harness 助手。</strong>
+</p>
 
-- 一个“消息接入”设置入口，集中管理五种渠道和多个机器人。
-- 五个渠道统一解析模型回复中的独立 `---` 行：每段发送为一条独立气泡，分隔符不展示，单轮最多 10 条。
-- 支持渠道扫码或官方机器人凭据、连接状态、重连、删除、工作区和 Session 绑定。
-- 微信保留 iLink 扫码、验证码、重新登录/续签、引用、语音转写、媒体和流式气泡能力。
-- 飞书支持长连接和 CardKit Markdown 流式；QQ、企业微信、钉钉使用各自官方 SDK/Stream 能力。
-- `system-prompt.md`、`soul.md`、`rules.md` 和 `memory.md` 可在“助手设置”中编辑和重置。
-- 新 Session 首轮注入提示词；日期或静态提示词变化时轮换会话。
-- 模型记忆操作不会显示给聊天用户，支持新增、替换、删除、去重、凭据拒绝和原子写入。
-- 简单消息和复杂任务可分别在“助手设置”中选择 `deepseek-v4-flash` 或 `deepseek-v4-pro`，推理挡位支持 `off`、`high`、`max`；默认分别为 `deepseek-v4-flash/off` 和 `deepseek-v4-flash/max`。
-- 历史按 `channel + botId + conversation` 隔离保存。
+<p align="center">
+  微信 · 飞书 · QQ · 企业微信 · 钉钉<br>
+  一套插件，统一接入，共享提示词、长期记忆与会话上下文。
+</p>
 
-## 安装
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.0.0-2563EB?style=flat-square" alt="Version 2.0.0">
+  <img src="https://img.shields.io/badge/Node.js-%E2%89%A522.19-16A34A?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 22.19 or later">
+  <img src="https://img.shields.io/badge/channels-5-7C3AED?style=flat-square" alt="5 channels">
+  <img src="https://img.shields.io/badge/license-MIT-111827?style=flat-square" alt="MIT License">
+</p>
 
-要求 Node.js 22.19 或更高版本，并确保 `dsh` 命令可用。
+<p align="center">
+  <a href="#产品预览">产品预览</a> ·
+  <a href="#核心能力">核心能力</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#工作原理">工作原理</a> ·
+  <a href="#开发验证">开发验证</a>
+</p>
 
-### 环境变量
+---
 
-- `DSH_ROOT`：可选的 DSH 源码根目录；设置后安装器会在该目录运行 `pnpm dsh`。
-- `DSH_HOME`：DSH 数据根目录，里面保存 `profiles/` 和 `integrations/`；不设置时默认为当前用户目录下的 `.dsh`。
-- `DSH_PROFILE`：安装或卸载使用的 DSH profile；不设置时默认为 `web`。
-- `DSH_CLI`：可选的 CLI 命令覆盖值；通常无需设置。
+`dsh-message` 是面向 DeepSeek Harness 的统一消息接入插件。它把五种主流消息渠道汇聚到同一套 Host / Client 架构中，让一个助手在不同入口间保持一致的人设、记忆、模型策略和回复体验。
 
-> `D:\Program Files\dsh` 是源码目录，应配置给 `DSH_ROOT`，不能配置给 `DSH_HOME`。当前机器的实际 profile 位于 `%USERPROFILE%\.dsh\profiles\web`，所以 `DSH_HOME` 应为 `%USERPROFILE%\.dsh`。
+<p align="center">
+  <img src="./docs/pic/setting.jpg" width="100%" alt="dsh-message 统一助手设置">
+  <br>
+  <sub>统一控制台：渠道接入、模型策略、长期记忆与提示词集中管理</sub>
+</p>
 
-如果没有设置 `DSH_ROOT`，安装器会直接调用 `dsh` CLI，因此应先确认以下命令可以正常运行：
+## 为什么选择 dsh-message
+
+| | 能力 | 价值 |
+| --- | --- | --- |
+| **01** | 五渠道统一接入 | 在一个设置入口管理微信、飞书、QQ、企业微信和钉钉，无需维护五套割裂的助手。 |
+| **02** | 共享智能内核 | 提示词、灵魂设定、行为规则、长期记忆和模型策略在所有渠道间保持一致。 |
+| **03** | 原生渠道体验 | 支持扫码或官方机器人凭据、流式回复、连接检查、自动重连和多机器人管理。 |
+| **04** | 会话级隔离 | 历史记录按 `channel + botId + conversation` 隔离，兼顾上下文连续性与数据边界。 |
+| **05** | 可运营、可维护 | 状态、最近错误、工作区和 Session 绑定都可在控制台中查看与管理。 |
+
+## 产品预览
+
+### 一个助手，一套灵魂
+
+在“助手设置”中分别维护系统提示词、灵魂、人设规则和长期记忆。新 Session 首轮自动注入提示词；日期或静态提示词发生变化时，系统会轮换会话，避免旧上下文污染新策略。
+
+<p align="center">
+  <img src="./docs/pic/soul.jpg" width="100%" alt="dsh-message 灵魂与提示词设置">
+  <br>
+  <sub>提示词与记忆编辑器：system-prompt.md · soul.md · rules.md · memory.md</sub>
+</p>
+
+### 微信：扫码即用，贴近真实聊天
+
+微信渠道保留 iLink 扫码登录、验证码、重新登录与续签能力，并支持引用、语音转写、媒体消息和流式气泡回复。
+
+<p align="center">
+  <img src="./docs/pic/weixin.jpg" width="100%" alt="dsh-message 微信渠道管理">
+  <br>
+  <sub>微信接入管理：运行状态、连接检查、工作区绑定与安全移除</sub>
+</p>
+
+<p align="center">
+  <img src="./docs/pic/weixin-show.jpg" width="82%" alt="dsh-message 微信对话效果">
+  <br>
+  <sub>微信实机对话效果</sub>
+</p>
+
+### 飞书：长连接与流式卡片
+
+支持飞书长连接和 CardKit Markdown 流式回复，可扫码接入，也可使用应用凭据手动配置。
+
+<p align="center">
+  <img src="./docs/pic/feishu.jpg" width="100%" alt="dsh-message 飞书渠道管理">
+  <br>
+  <sub>飞书机器人：扫码 / 手动接入、在线状态与工作区管理</sub>
+</p>
+
+### QQ：官方流程快速绑定
+
+通过腾讯官方页面扫码创建并绑定机器人，无需手动填写 AppID 或 AppSecret；同时保留手动接入方式。
+
+<p align="center">
+  <img src="./docs/pic/qq.jpg" width="100%" alt="dsh-message QQ 渠道管理">
+  <br>
+  <sub>QQ 机器人：官方扫码创建并自动连接 DeepSeek Harness</sub>
+</p>
+
+> 企业微信与钉钉同样集成在统一控制台中，分别使用官方 SDK 与 Stream 能力完成消息接入。
+
+## 核心能力
+
+### 统一对话体验
+
+- 模型回复中的独立 `---` 行会被解析为气泡分隔符；每段单独发送，分隔符不展示，单轮最多 10 条。
+- 简单消息与复杂任务可使用不同的模型 / 推理组合，默认分别为 `deepseek-v4-flash/off` 与 `deepseek-v4-flash/max`。
+- 支持工作区与 Session 绑定，让每个机器人在明确的工作环境中执行任务。
+- 新消息、连接中断和异常状态都有对应的停止、重连与恢复路径。
+
+### 长期记忆
+
+- 模型可以新增、替换、删除和去重记忆，相关内部操作不会显示给聊天用户。
+- 记忆写入采用原子更新，并主动拒绝保存凭据等敏感信息。
+- 可在控制台直接编辑 `memory.md`，也可关闭长期记忆能力。
+
+### 渠道管理
+
+| 渠道 | 接入方式 | 关键能力 |
+| --- | --- | --- |
+| 微信 | iLink 扫码 | 长轮询、续签、引用、语音转写、媒体、流式气泡 |
+| 飞书 | 扫码 / 应用凭据 | 长连接、CardKit Markdown 流式回复 |
+| QQ | 官方扫码 / 手动配置 | 官方 Bot SDK、快速创建与绑定 |
+| 企业微信 | 官方机器人凭据 | 官方 AI Bot SDK、状态与会话管理 |
+| 钉钉 | 官方机器人凭据 | Stream 模式、卡片流式回复 |
+
+## 快速开始
+
+### 环境要求
+
+- Node.js `22.19` 或更高版本
+- 可用的 DeepSeek Harness；`dsh` 命令已加入 `PATH`，或已配置 `DSH_ROOT`
+
+先检查 DSH CLI：
 
 ```bash
 dsh --help
 ```
 
-Windows PowerShell：
+### 从 npm 安装
+
+```bash
+npx -y @stu-xie/dsh-message install
+dsh --profile web
+```
+
+启动后进入 **设置 → 插件 → 消息接入**，选择需要的渠道并按界面引导完成接入。
+
+### 从源码安装
+
+```bash
+npm install
+npm run check
+npm run install:dsh
+```
+
+Windows PowerShell 使用 DSH 源码目录时：
 
 ```powershell
-# 当前 PowerShell 会话生效
 $env:DSH_ROOT = 'D:\Program Files\dsh'
 $env:DSH_HOME = "$env:USERPROFILE\.dsh"
 $env:DSH_PROFILE = 'web'
@@ -47,18 +165,9 @@ npm run check
 npm run install:dsh
 ```
 
-需要持久保存到当前 Windows 用户时，可执行下面的命令，然后重新打开 PowerShell：
-
-```powershell
-[Environment]::SetEnvironmentVariable('DSH_ROOT', 'D:\Program Files\dsh', 'User')
-[Environment]::SetEnvironmentVariable('DSH_HOME', "$env:USERPROFILE\.dsh", 'User')
-[Environment]::SetEnvironmentVariable('DSH_PROFILE', 'web', 'User')
-```
-
-Linux/macOS（bash 或 zsh）：
+Linux / macOS：
 
 ```bash
-# 当前终端会话生效
 export DSH_ROOT="/path/to/dsh"
 export DSH_HOME="$HOME/.dsh"
 export DSH_PROFILE="web"
@@ -68,71 +177,89 @@ npm run check
 npm run install:dsh
 ```
 
-需要长期生效时，把两个 `export` 写入 `~/.bashrc`、`~/.zshrc` 或系统实际使用的 shell 配置文件，然后重新打开终端或执行 `source`。
+> `DSH_ROOT` 指向 DSH 源码目录；`DSH_HOME` 指向 DSH 数据目录，默认是当前用户目录下的 `.dsh`。两者不能混用。
 
-环境变量只是默认值，也可以在单次操作中用 CLI 参数覆盖 profile：
+### 安装参数
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `DSH_ROOT` | 未设置 | DSH 源码根目录；设置后安装器在该目录中运行 `pnpm dsh`。 |
+| `DSH_HOME` | `~/.dsh` | DSH 数据根目录，包含 `profiles/` 与 `integrations/`。 |
+| `DSH_PROFILE` | `web` | 安装或卸载使用的 DSH profile。 |
+| `DSH_CLI` | 自动选择 | 覆盖安装器调用的 CLI，通常无需设置。 |
+
+单次指定 profile：
 
 ```bash
 npm run install:dsh -- --profile web
 npm run uninstall:dsh -- --profile web
 ```
 
-### 执行安装
+卸载只移除插件，不会删除机器人凭据、登录状态、提示词、记忆或历史数据。
 
-```bash
-npm install
-npm run check
-npm run install:dsh
+## 工作原理
+
+```mermaid
+flowchart LR
+    WX[微信] --> CHANNEL[统一渠道层]
+    FS[飞书] --> CHANNEL
+    QQ[QQ] --> CHANNEL
+    WC[企业微信] --> CHANNEL
+    DT[钉钉] --> CHANNEL
+
+    CHANNEL --> SESSION[工作区与 Session 路由]
+    PROMPT[提示词 · 灵魂 · 规则] --> AGENT[共享 Agent 服务]
+    MEMORY[长期记忆] --> AGENT
+    SESSION --> AGENT
+    AGENT <--> DSH[DeepSeek Harness]
+    DSH --> CHANNEL
 ```
 
-重启 `dsh web` 后，打开“设置 → 插件 → 消息接入”。卸载只移除插件，不删除机器人凭据、登录状态、提示词、记忆或历史：
+项目由一套统一的 React 设置页和 Host 插件组成。各渠道负责登录、连接与消息协议；共享 Agent 服务负责提示词、记忆、会话和模型策略；所有生产 Controller 通过 DSH Web HTTP RPC 与 Harness 通信。
 
-插件模式默认完全静默：不会向 `dsh web` 终端输出渠道连接、SDK、消息收发、重连或错误日志；运行状态和最近错误只保存在状态数据中并显示在设置页。该行为不会覆盖全局 `console`，因此 DSH 自身的启动信息仍会正常显示。
+## 数据与安全
 
-```bash
-npm run uninstall:dsh
-```
-
-## 数据目录
-
-默认根目录是 `<DSH_HOME>/integrations/dsh-message`：
+默认数据根目录为 `<DSH_HOME>/integrations/dsh-message`：
 
 ```text
 dsh-message/
-  agent/
-    prompt/       可编辑提示词
-    memory/       长期记忆
-    history/      隔离的本地会话历史
-    sessions.json 会话日期和提示词指纹
-    settings.json 助手设置
-  channels/
-    weixin/
-    feishu/
-    qq/
-    wecom/
-    dingtalk/
+├─ agent/
+│  ├─ prompt/          # 可编辑提示词
+│  ├─ memory/          # 长期记忆
+│  ├─ history/         # 隔离的本地会话历史
+│  ├─ sessions.json    # 会话日期与提示词指纹
+│  └─ settings.json    # 助手设置
+└─ channels/
+   ├─ weixin/
+   ├─ feishu/
+   ├─ qq/
+   ├─ wecom/
+   └─ dingtalk/
 ```
 
-Host 配置可用 `dataDir` 覆盖根目录，也可在具体渠道配置中单独覆盖 `dataDir`。管理 RPC 默认只允许 loopback；只有明确需要可信远程 Host 时才配置 `rpcAuthority: "trusted-host"`。
+- Host 可通过 `dataDir` 覆盖根目录，也可为具体渠道单独指定 `dataDir`。
+- 管理 RPC 默认只允许 loopback；仅在可信远程 Host 场景中配置 `rpcAuthority: "trusted-host"`。
+- 插件模式默认静默运行。渠道连接、SDK、消息收发和重连日志不会写入 `dsh web` 终端；状态和最近错误在设置页中查看。
+- 数据目录可能包含机器人凭据、登录状态和对话历史，请勿提交到版本库或公开分享。
+
+## 从旧版迁移
+
+安装器会替换旧的 `@deepseek-ai/dsh-weixin`、`@xmanrui/dsh-im` 及独立渠道插件，但不会删除旧数据。Host 首次启动时会迁移旧提示词、`memory/memory.md`、历史和五渠道数据；已存在的目标文件不会被覆盖，迁移结果记录在 `migration.json`。
+
+首次部署前仍建议备份 `<DSH_HOME>`。
 
 ## 项目结构
 
 ```text
-plugin-src/client/   统一 React 设置页和五渠道 UI
-plugin-src/host/     Host 插件、管理 RPC 和生产 Controller
-src/agent/           五渠道共享的提示词、记忆、会话与模型策略
-src/channels/shared/ Harness、工作区、Session 和通用桥接
-src/channels/*/      五种渠道的 Controller、Runtime、Bridge 和 Store
-src/core/            原项目保留的提示词、记忆、微信媒体和调度基础能力
+plugin-src/client/   统一 React 设置页与五渠道 UI
+plugin-src/host/     Host 插件、管理 RPC 与生产 Controller
+src/agent/           共享提示词、记忆、会话与模型策略
+src/channels/shared/ Harness、工作区、Session 与通用桥接
+src/channels/*/      各渠道 Controller、Runtime、Bridge 与 Store
+src/core/            提示词、记忆、微信媒体与调度基础能力
 src/prompt/          默认提示词模板
-bin/dsh-message.mjs  安装/卸载 CLI
+bin/dsh-message.mjs  安装 / 卸载 CLI
 ```
-
-插件模式和渠道生产 Controller 都使用 DSH Web 暴露的 HTTP RPC，不在生产入口中使用进程内 Transport。旧版 `src/standalone` 代码仅作为兼容迁移来源保留，不是新插件的运行入口。
-
-## 从旧版迁移
-
-安装器会替换旧的 `@deepseek-ai/dsh-weixin`、`@xmanrui/dsh-im` 以及独立渠道插件，但不会删除旧数据。Host 首次启动时会把旧提示词、`memory/memory.md`、历史和五渠道数据复制到新目录，已经存在的目标文件不会被覆盖；结果记录在 `migration.json`。首次部署前仍建议备份 `<DSH_HOME>`。
 
 ## 开发验证
 
@@ -142,8 +269,15 @@ npm run build
 npm run check
 ```
 
-渠道真实登录仍需要相应平台账号和机器人应用；自动测试与构建不会代替平台端联调。
+真实渠道登录仍需要对应平台账号与机器人应用。自动化测试和构建验证不能替代平台端联调。
 
 ## 许可证与来源
 
-项目使用 MIT License。迁移自 dsh-im 及渠道 SDK/协议实现的代码、版本和许可证见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+本项目基于 [MIT License](./LICENSE) 发布。迁移自 dsh-im 及各渠道 SDK / 协议实现的代码、版本与许可证信息见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
+---
+
+<p align="center">
+  <strong>DSH Message</strong><br>
+  Five channels. One assistant. One continuous experience.
+</p>
