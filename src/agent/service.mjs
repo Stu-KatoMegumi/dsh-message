@@ -27,7 +27,18 @@ import { localDateKey, safeKey } from '../core/store.mjs'
 const ACTION_RE = /(写|改|创建|生成|删除|移动|复制|运行|执行|启动|停止|安装|下载|上传|搜索|查询|查找|分析|总结|整理|重构|调试|测试|构建|打包|部署|提交|推送|合并|克隆|备份|翻译|转换|解压|代码|脚本|命令|文件|项目|docker|git|npm|pnpm|node|python|pip|ssh|sql|api)/i
 const SESSION_VERSION = 1
 const MODEL_PROVIDER = 'deepseek-official'
-const MODEL_NAME = 'deepseek-v4-flash'
+const MODEL_NAMES = ['deepseek-v4-flash', 'deepseek-v4-pro']
+const REASONING_EFFORTS = ['off', 'high', 'max']
+
+function model(modelName, reasoningEffort) {
+  return { provider: MODEL_PROVIDER, model: modelName, reasoningEffort }
+}
+
+export const MODEL_OPTIONS = Object.freeze(MODEL_NAMES.flatMap((modelName) =>
+  REASONING_EFFORTS.map((reasoningEffort) => Object.freeze(model(modelName, reasoningEffort)))))
+
+const DEFAULT_FAST_MODEL = MODEL_OPTIONS[0]
+const DEFAULT_COMPLEX_MODEL = MODEL_OPTIONS[2]
 
 function atomicJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -54,8 +65,23 @@ function findDefaultPromptDir() {
     ?? path.resolve(process.cwd(), 'src', 'prompt')
 }
 
-function model(reasoningEffort) {
-  return { provider: MODEL_PROVIDER, model: MODEL_NAME, reasoningEffort }
+function normalizeModelChoice(value, fallback = null) {
+  let modelName = value?.model
+  let reasoningEffort = value?.reasoningEffort
+  if (typeof value === 'string') {
+    const slash = value.lastIndexOf('/')
+    modelName = value.slice(0, slash)
+    reasoningEffort = value.slice(slash + 1)
+  }
+  const option = MODEL_OPTIONS.find((candidate) =>
+    candidate.model === modelName && candidate.reasoningEffort === reasoningEffort)
+  return option ? { ...option } : fallback ? { ...fallback } : null
+}
+
+function requireModelChoice(value, label) {
+  const choice = normalizeModelChoice(value)
+  if (!choice) throw new Error(`不支持的${label}模型`)
+  return choice
 }
 
 function scopedKey({ channel, botId, key }) {
@@ -79,13 +105,14 @@ export class AgentService {
   }
 
   settings() {
+    const stored = readJson(this.settingsFile, {})
     return {
       enabled: true,
       dailySessions: true,
       memoryEnabled: true,
-      ...readJson(this.settingsFile, {}),
-      fastModel: model('off'),
-      complexModel: model('max'),
+      ...stored,
+      fastModel: normalizeModelChoice(stored.fastModel, DEFAULT_FAST_MODEL),
+      complexModel: normalizeModelChoice(stored.complexModel, DEFAULT_COMPLEX_MODEL),
     }
   }
 
@@ -97,6 +124,10 @@ export class AgentService {
         ? current.dailySessions : Boolean(patch.dailySessions),
       memoryEnabled: patch.memoryEnabled === undefined
         ? current.memoryEnabled : Boolean(patch.memoryEnabled),
+      fastModel: patch.fastModel === undefined
+        ? current.fastModel : requireModelChoice(patch.fastModel, '简单消息'),
+      complexModel: patch.complexModel === undefined
+        ? current.complexModel : requireModelChoice(patch.complexModel, '复杂任务'),
       updatedAt: new Date().toISOString(),
     }
     atomicJson(this.settingsFile, next)
@@ -112,6 +143,7 @@ export class AgentService {
       memoryFile: this.memoryFile,
       sessionCount: Object.keys(sessions).length,
       settings: this.settings(),
+      modelOptions: MODEL_OPTIONS,
       prompts: this.listPrompts(),
     }
   }

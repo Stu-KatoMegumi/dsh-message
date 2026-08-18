@@ -4,6 +4,7 @@ import {
   DingtalkLogoGlyph,
   FeishuLogoGlyph,
   QqLogoGlyph,
+  SettingsLogoGlyph,
   WecomLogoGlyph,
   WeixinLogoGlyph,
 } from './channel-logos.js'
@@ -49,12 +50,13 @@ function ChannelLogo({ channel }) {
     qq: QqLogoGlyph,
     wecom: WecomLogoGlyph,
     dingtalk: DingtalkLogoGlyph,
+    agent: SettingsLogoGlyph,
   }
   const Icon = icons[channel]
   return h('span', {
     className: `dim-logo dim-logo${channel[0].toUpperCase()}${channel.slice(1)}`,
     'aria-hidden': 'true',
-  }, Icon ? h(Icon) : '⚙')
+  }, Icon ? h(Icon) : null)
 }
 
 export function MessageSettingsTab({

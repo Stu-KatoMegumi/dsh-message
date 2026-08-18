@@ -12,7 +12,7 @@
 - `system-prompt.md`、`soul.md`、`rules.md` 和 `memory.md` 可在“助手设置”中编辑和重置。
 - 新 Session 首轮注入提示词；日期或静态提示词变化时轮换会话。
 - 模型记忆操作不会显示给聊天用户，支持新增、替换、删除、去重、凭据拒绝和原子写入。
-- 简单消息固定使用 `deepseek-v4-flash/off`，复杂任务固定使用 `deepseek-v4-flash/max`。
+- 简单消息和复杂任务可分别在“助手设置”中选择 `deepseek-v4-flash` 或 `deepseek-v4-pro`，推理挡位支持 `off`、`high`、`max`；默认分别为 `deepseek-v4-flash/off` 和 `deepseek-v4-flash/max`。
 - 历史按 `channel + botId + conversation` 隔离保存。
 
 ## 安装
