@@ -1,0 +1,311 @@
+import { realpath, stat } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
+
+import { WORKSPACE_SESSION_STALE } from './workspace-session.mjs';
+
+const WORKSPACE_COMMAND = /^\/workspace(?:\s+([\s\S]+))?$/i;
+const WORKSPACE_LIST_COMMAND = /^\/workspacelist(?:\s+([\s\S]+))?$/i;
+const SESSION_LIST_COMMAND = /^\/sessionlist(?:\s+([\s\S]+))?$/i;
+const SESSION_BIND_PREFIX = /^\/session(?=$|\s)/i;
+const SESSION_BIND_COMMAND = /^\/session[ \t]+([^\s]+)$/i;
+const MAX_WORKSPACE_PATH_LENGTH = 4_096;
+const MAX_COMMAND_MESSAGE_LENGTH = 1_800;
+const MAX_SESSION_ID_LENGTH = 256;
+const UNSAFE_DISPLAY_TEXT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const UNSAFE_DISPLAY_TEXT_GLOBAL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
+const SESSION_BIND_USAGE = '用法：/session Session ID';
+const SESSION_LIST_USAGE = [
+  '用法：',
+  '/sessionlist  列出当前工作区会话',
+  '/sessionlist 工作区序号  按 /workspacelist 序号列出会话',
+  '/sessionlist 工作区绝对路径  列出指定工作区会话',
+].join('\n');
+
+function commandResult(message, messages = [message]) {
+  return { handled: true, message, messages };
+}
+
+function normalizedWorkspacePath(value) {
+  if (typeof value !== 'string' || value.length > MAX_WORKSPACE_PATH_LENGTH
+    || !isAbsolute(value) || UNSAFE_DISPLAY_TEXT.test(value)) return null;
+  return resolve(value);
+}
+
+function safeDisplayText(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(UNSAFE_DISPLAY_TEXT_GLOBAL, ' ').replace(/\s+/gu, ' ').trim();
+}
+
+function validSessionId(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_SESSION_ID_LENGTH
+    && !/\p{White_Space}/u.test(value)
+    && !UNSAFE_DISPLAY_TEXT.test(value);
+}
+
+async function existingWorkspacePaths(values) {
+  const checked = await Promise.all(values.map(async (value) => {
+    const workspace = normalizedWorkspacePath(value);
+    if (!workspace) return null;
+    try {
+      if (!(await stat(workspace)).isDirectory()) return null;
+      return normalizedWorkspacePath(await realpath(workspace));
+    } catch {
+      return null;
+    }
+  }));
+  return [...new Set(checked.filter(Boolean))];
+}
+
+async function selectedWorkspacePath(value) {
+  if (typeof value !== 'string' || !isAbsolute(value.trim())) {
+    return { error: `工作区必须是绝对路径。\n${SESSION_LIST_USAGE}` };
+  }
+  const workspace = normalizedWorkspacePath(value.trim());
+  if (!workspace) {
+    return { error: `工作区路径包含不支持的字符或长度超过限制。\n${SESSION_LIST_USAGE}` };
+  }
+  let info;
+  try {
+    info = await stat(workspace);
+  } catch {
+    return { error: `工作区路径不存在。\n${SESSION_LIST_USAGE}` };
+  }
+  if (!info.isDirectory()) {
+    return { error: `工作区路径必须指向一个目录。\n${SESSION_LIST_USAGE}` };
+  }
+  try {
+    const canonical = normalizedWorkspacePath(await realpath(workspace));
+    return canonical
+      ? { workspace: canonical }
+      : { error: `工作区路径包含不支持的字符或长度超过限制。\n${SESSION_LIST_USAGE}` };
+  } catch {
+    return { error: `工作区路径不存在。\n${SESSION_LIST_USAGE}` };
+  }
+}
+
+async function workspacePathSnapshot(harness) {
+  const listed = await harness.listWorkspaces();
+  const currentValue = typeof harness?.currentWorkspace === 'function'
+    ? harness.currentWorkspace()
+    : null;
+  const [current] = currentValue ? await existingWorkspacePaths([currentValue]) : [];
+  const registered = await existingWorkspacePaths(Array.isArray(listed) ? listed : []);
+  const paths = [...new Set([...(current ? [current] : []), ...registered])];
+  harness.assertWorkspaceScope?.();
+  return { current: current ?? null, paths };
+}
+
+export function splitWorkspaceCommandMessage(message) {
+  const messages = [];
+  let offset = 0;
+  while (offset < message.length) {
+    let end = Math.min(offset + MAX_COMMAND_MESSAGE_LENGTH, message.length);
+    if (end < message.length) {
+      const lineBreak = message.lastIndexOf('\n', end - 1);
+      if (lineBreak >= offset) {
+        end = lineBreak + 1;
+      } else {
+        const trailing = message.charCodeAt(end - 1);
+        const leading = message.charCodeAt(end);
+        if (trailing >= 0xd800 && trailing <= 0xdbff
+          && leading >= 0xdc00 && leading <= 0xdfff) end -= 1;
+      }
+    }
+    messages.push(message.slice(offset, end));
+    offset = end;
+  }
+  return messages;
+}
+
+async function runWorkspaceListCommand(match, harness) {
+  if (match[1]?.trim()) return commandResult('用法：/workspacelist');
+  if (typeof harness?.listWorkspaces !== 'function') {
+    return commandResult('当前机器人暂不支持列出工作区。');
+  }
+  try {
+    const { current, paths } = await workspacePathSnapshot(harness);
+    if (paths.length === 0) {
+      return commandResult('当前 Harness Host 上没有仍然存在的已登记工作区。');
+    }
+    const lines = [
+      `当前 Harness Host 上存在的工作区（${paths.length}）：`,
+      ...paths.map((workspace, index) => (
+        `${index + 1}. ${workspace}${workspace === current ? '（当前）' : ''}`
+      )),
+      '',
+      '切换用法：/workspace 工作区绝对路径',
+      '查看会话：/sessionlist 工作区序号或绝对路径',
+    ];
+    const message = lines.join('\n');
+    return commandResult(message, splitWorkspaceCommandMessage(message));
+  } catch (error) {
+    if (error?.code === 'workspace-bot-not-found') {
+      return commandResult('机器人正在移除或已重新接入，无法列出原会话的工作区。');
+    }
+    return commandResult('暂时无法获取工作区列表，请稍后重试。');
+  }
+}
+
+async function resolveSessionListWorkspace(selector, harness) {
+  if (!selector) {
+    if (typeof harness?.currentWorkspace !== 'function') {
+      return { error: '当前机器人没有可用的工作区。' };
+    }
+    const selected = await selectedWorkspacePath(harness.currentWorkspace());
+    harness.assertWorkspaceScope?.();
+    return selected;
+  }
+
+  if (/^\d+$/u.test(selector)) {
+    if (typeof harness?.listWorkspaces !== 'function') {
+      return { error: '当前机器人暂不支持按序号选择工作区。' };
+    }
+    const { paths } = await workspacePathSnapshot(harness);
+    const position = Number(selector);
+    if (!Number.isSafeInteger(position) || position < 1 || position > paths.length) {
+      return { error: '工作区序号不存在，请先执行 /workspacelist。' };
+    }
+    return { workspace: paths[position - 1] };
+  }
+
+  const selected = await selectedWorkspacePath(selector);
+  harness.assertWorkspaceScope?.();
+  return selected;
+}
+
+function sessionListMessage(workspace, sessions) {
+  const rows = sessions.map((session) => {
+    const sessionId = safeDisplayText(session?.sessionId);
+    if (!sessionId) throw new TypeError('Harness returned an invalid session id');
+    const title = session?.summaryAvailable === false
+      ? '标题暂不可用'
+      : safeDisplayText(session?.title) || '暂无标题';
+    return `${title}${session?.archived === true ? '（已归档）' : ''}\n   ID: ${sessionId}`;
+  });
+  if (rows.length === 0) return `工作区：${workspace}\n该工作区暂无会话。`;
+  return [
+    `工作区：${workspace}`,
+    `会话（${rows.length}）：`,
+    '',
+    ...rows.map((row, index) => `${index + 1}. ${row}`),
+    '',
+    '绑定用法：/session Session ID',
+  ].join('\n');
+}
+
+async function runSessionListCommand(match, harness) {
+  if (typeof harness?.listWorkspaceSessions !== 'function') {
+    return commandResult('当前机器人暂不支持列出工作区会话。');
+  }
+  const selector = match[1]?.trim() ?? '';
+  try {
+    const resolved = await resolveSessionListWorkspace(selector, harness);
+    if (resolved.error) return commandResult(resolved.error);
+    const listed = await harness.listWorkspaceSessions(resolved.workspace);
+    if (!listed || !Array.isArray(listed.sessions)) {
+      throw new TypeError('Harness returned an invalid workspace session list');
+    }
+    harness.assertWorkspaceScope?.();
+    const workspace = normalizedWorkspacePath(listed.workspace) ?? resolved.workspace;
+    const message = sessionListMessage(workspace, listed.sessions);
+    return commandResult(message, splitWorkspaceCommandMessage(message));
+  } catch (error) {
+    if (error?.code === 'workspace-bot-not-found') {
+      return commandResult('机器人正在移除或已重新接入，无法列出原会话的工作区会话。');
+    }
+    return commandResult('暂时无法获取工作区会话列表，请稍后重试。');
+  }
+}
+
+function sessionBindErrorMessage(error) {
+  if (error?.code === 'session-id-invalid') {
+    return `Session ID 格式无效。\n${SESSION_BIND_USAGE}`;
+  }
+  if (['session-not-registered', 'session-not-found'].includes(error?.code)) {
+    return '未找到该会话，请先执行 /sessionlist 确认 Session ID。';
+  }
+  if (error?.code === 'session-subagent-unsupported') {
+    return '子代理会话不能绑定到机器人对话，请选择普通会话。';
+  }
+  if (error?.code === 'session-workspace-ambiguous') {
+    return '该会话的工作区归属不明确，暂时无法绑定。';
+  }
+  if (error?.code === 'session-summary-unavailable') {
+    return '暂时无法读取该会话的信息，请稍后重试。';
+  }
+  if (error?.code === 'workspace-bot-not-found') {
+    return '机器人正在移除或已重新接入，无法绑定原对话的会话。';
+  }
+  if ([WORKSPACE_SESSION_STALE, 'agent-busy', 'session-conflict', 'workspace-conflict']
+    .includes(error?.code)) {
+    return '工作区或会话状态已发生变化，请重试。';
+  }
+  return '暂时无法绑定会话，请稍后重试。';
+}
+
+async function runSessionBindCommand(command, harness, conversationKey) {
+  const match = SESSION_BIND_COMMAND.exec(command);
+  const sessionId = match?.[1];
+  if (!validSessionId(sessionId)) return commandResult(SESSION_BIND_USAGE);
+  if (typeof harness?.bindWorkspaceSession !== 'function') {
+    return commandResult('当前机器人暂不支持绑定已有会话。');
+  }
+  if (typeof conversationKey !== 'string' || !conversationKey) {
+    return commandResult('当前消息缺少可绑定的会话上下文。');
+  }
+  try {
+    const bound = await harness.bindWorkspaceSession(conversationKey, sessionId);
+    harness.assertWorkspaceScope?.();
+    const workspace = normalizedWorkspacePath(bound?.workspace);
+    const boundSessionId = safeDisplayText(bound?.sessionId);
+    if (!workspace || !boundSessionId) {
+      throw new TypeError('Harness returned an invalid bound session');
+    }
+    const title = safeDisplayText(bound?.title) || '暂无标题';
+    const message = [
+      '当前聊天已绑定会话：',
+      `工作区：${workspace}`,
+      `标题：${title}`,
+      `ID：${boundSessionId}`,
+      `归档：${bound?.archived === true ? '是' : '否'}`,
+    ].join('\n');
+    return commandResult(message, splitWorkspaceCommandMessage(message));
+  } catch (error) {
+    return commandResult(sessionBindErrorMessage(error));
+  }
+}
+
+export async function runWorkspaceCommand(text, harness, conversationKey) {
+  if (typeof text !== 'string') return null;
+  const command = text.trim();
+  if (SESSION_BIND_PREFIX.test(command)) {
+    return runSessionBindCommand(command, harness, conversationKey);
+  }
+  const sessionListMatch = SESSION_LIST_COMMAND.exec(command);
+  if (sessionListMatch) return runSessionListCommand(sessionListMatch, harness);
+  const listMatch = WORKSPACE_LIST_COMMAND.exec(command);
+  if (listMatch) return runWorkspaceListCommand(listMatch, harness);
+  const match = WORKSPACE_COMMAND.exec(command);
+  if (!match) return null;
+  const workspace = match[1]?.trim();
+  if (!workspace) {
+    return commandResult('用法：/workspace 工作区绝对路径');
+  }
+  if (typeof harness?.switchWorkspace !== 'function') {
+    return commandResult('当前机器人暂不支持切换工作区。');
+  }
+  try {
+    const current = await harness.switchWorkspace(workspace);
+    return commandResult(`工作区已切换为：${current}`);
+  } catch (error) {
+    if (['workspace-not-absolute', 'workspace-not-found', 'workspace-not-directory'].includes(error?.code)) {
+      return commandResult(`${error.message}\n用法：/workspace 工作区绝对路径`);
+    }
+    if (error?.code === 'workspace-bot-not-found') {
+      return commandResult('机器人正在移除或已重新接入，无法切换原会话的工作区。');
+    }
+    throw error;
+  }
+}

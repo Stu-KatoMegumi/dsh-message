@@ -1,0 +1,126 @@
+import { unlink } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+import { createTokenConnectionSupervisor } from './connection-supervisor.mjs';
+import {
+  BotWorkspaceStore,
+  createBotWorkspaceScope,
+  createWorkspaceAwareController,
+  observeBotWorkspaceRemovals,
+} from '../../../../src/channels/shared/bot-workspace-store.mjs';
+
+export function harnessOrigin(webServer, configured) {
+  if (configured !== undefined) return new URL(configured);
+  const port = webServer?.port;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('dsh-message token channel requires an initialized DSH webServer port');
+  }
+  return new URL(`http://127.0.0.1:${port}`);
+}
+
+export function pluginPaths(config, channel) {
+  const dshHome = resolve(config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
+  const root = resolve(config.dataDir ?? join(dshHome, 'integrations', `dsh-${channel}`));
+  return {
+    config: resolve(config.configPath ?? join(root, 'config.json')),
+    bots: resolve(config.botsDir ?? join(root, 'bots')),
+    workspaces: resolve(config.workspacesPath ?? join(root, 'workspaces.json')),
+  };
+}
+
+export async function createTokenProductionController(ctx, config, internals, definitions) {
+  const { channel, ConfigStore, StateStore, HarnessClient, Controller, Runtime } = definitions;
+  if (!ctx?.credentials) throw new TypeError(`dsh-message ${channel} requires ctx.credentials`);
+  if (!ctx?.webServer) throw new TypeError(`dsh-message ${channel} requires ctx.webServer`);
+
+  const ResolvedConfigStore = internals.ConfigStore ?? ConfigStore;
+  const ResolvedStateStore = internals.StateStore ?? StateStore;
+  const ResolvedHarness = internals.HarnessClient ?? HarnessClient;
+  const ResolvedController = internals.Controller ?? Controller;
+  const ResolvedRuntime = internals.Runtime ?? Runtime;
+  const createSupervisor = internals.createConnectionSupervisor ?? createTokenConnectionSupervisor;
+  const logger = config.logger ?? (typeof ctx.logger === 'function'
+    ? ctx.logger(`dsh-message:${channel}`) : (ctx.logger ?? console));
+  const paths = pluginPaths(config, channel);
+  const configStore = await new ResolvedConfigStore(paths.config).load();
+  const defaultWorkspace = resolve(config.workspace ?? process.cwd());
+  const WorkspaceStore = internals.WorkspaceStore ?? BotWorkspaceStore;
+  const workspaces = internals.workspaces
+    ?? await new WorkspaceStore(paths.workspaces, { defaultWorkspace }).load();
+  const configuredBots = configStore.list();
+  await workspaces.reconcile(configuredBots.map((bot) => bot.botId));
+  await Promise.all(configuredBots.map((bot) => workspaces.ensure(bot.botId)));
+  const observedConfigStore = typeof configStore.remove === 'function'
+    ? observeBotWorkspaceRemovals(configStore, { workspaces })
+    : configStore;
+  const stateStores = new Map();
+  const statePath = (botId) => resolve(paths.bots, botId, 'state.json');
+  const stateFor = async (botId) => {
+    let state = stateStores.get(botId);
+    if (!state) {
+      state = await new ResolvedStateStore(statePath(botId)).load();
+      stateStores.set(botId, state);
+    }
+    return state;
+  };
+  const harness = new ResolvedHarness({
+    baseUrl: harnessOrigin(ctx.webServer, config.harnessBaseUrl),
+    workspace: defaultWorkspace,
+    agentPreset: config.agentPreset ?? 'standard',
+    autostart: false,
+    dshBin: config.dshBin ?? 'dsh',
+    logger,
+  });
+  const coreController = new ResolvedController({
+    credentials: ctx.credentials,
+    configStore: observedConfigStore,
+    logger,
+    ...(internals.inspectToken ? { inspectToken: internals.inspectToken } : {}),
+    createRuntime: async ({ botId, config: botConfig, token }) => {
+      const state = await stateFor(botId);
+      await workspaces.ensure(botId);
+      const workspaceScope = createBotWorkspaceScope(harness, { botId, workspaces, state });
+      return new ResolvedRuntime({
+        config: botConfig,
+        token,
+        harness: workspaceScope.harness,
+        state: workspaceScope.state,
+        replyTimeoutMs: config.replyTimeoutMs ?? 600_000,
+        connectTimeoutMs: config.connectTimeoutMs ?? 20_000,
+        logger,
+      });
+    },
+    deleteState: async ({ botId }) => {
+      const state = stateStores.get(botId);
+      stateStores.delete(botId);
+      if (state && typeof state.remove === 'function') {
+        await state.remove();
+      } else {
+        try {
+          await unlink(statePath(botId));
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+      }
+    },
+  });
+  const controller = createWorkspaceAwareController(coreController, { workspaces, stateFor, logger });
+  const supervisor = createSupervisor({
+    channel,
+    controller,
+    harness,
+    logger,
+    retryDelaysMs: config.retryDelaysMs,
+    healthyIntervalMs: config.healthyIntervalMs,
+  }).start();
+  return {
+    controller,
+    ready: supervisor.ready,
+    async close() {
+      await supervisor.close();
+      await controller.close();
+      harness.stopManagedProcess();
+    },
+  };
+}

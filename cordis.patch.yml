@@ -1,0 +1,6 @@
+- insert:
+    - id: dsh-message
+      name: '@stu-xie/dsh-message'
+      config:
+        preset: standard
+        workspaceTitle: dsh-message

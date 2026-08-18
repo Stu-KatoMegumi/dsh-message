@@ -1,0 +1,16 @@
+{
+  "name": "@stu-xie/dsh-message",
+  "version": "2.0.0",
+  "description": "dsh-message 的微信旧版兼容插件入口",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
