@@ -48,6 +48,7 @@ export class WeixinHarnessBridge {
   #replyTimeoutMs;
   #maxMessageChars;
   #queues = new Map();
+  #typingTickets = new Map();
 
   constructor({
     api,
@@ -150,14 +151,20 @@ export class WeixinHarnessBridge {
         return;
       }
 
-      const { answer } = await askInWorkspaceSession({
-        harness: this.#harness,
-        state: this.#state,
-        key,
-        text,
-        askOptions: { timeoutMs: this.#replyTimeoutMs },
-      });
-      await this.#send(sender, answer, contextToken, runId);
+      await this.#setTyping(sender, contextToken, true);
+      let answer;
+      try {
+        ({ answer } = await askInWorkspaceSession({
+          harness: this.#harness,
+          state: this.#state,
+          key,
+          text,
+          askOptions: { timeoutMs: this.#replyTimeoutMs },
+        }));
+        await this.#send(sender, answer, contextToken, runId);
+      } finally {
+        await this.#setTyping(sender, contextToken, false);
+      }
       await this.#state.markSeen(messageId);
       this.#status.messagesReplied += 1;
       this.#status.lastReplyAt = new Date().toISOString();
@@ -188,6 +195,35 @@ export class WeixinHarnessBridge {
         contextToken,
         runId,
       });
+    }
+  }
+
+  async #setTyping(userId, contextToken, active) {
+    if (typeof this.#api.getTypingTicket !== 'function'
+      || typeof this.#api.sendTyping !== 'function') return;
+    try {
+      let ticket = this.#typingTickets.get(userId);
+      if (!ticket) {
+        if (!active) return;
+        ticket = await this.#api.getTypingTicket({
+          baseUrl: this.#baseUrl,
+          token: this.#token,
+          userId,
+          contextToken,
+        });
+        if (!ticket) return;
+        this.#typingTickets.set(userId, ticket);
+      }
+      await this.#api.sendTyping({
+        baseUrl: this.#baseUrl,
+        token: this.#token,
+        userId,
+        typingTicket: ticket,
+        active,
+      });
+    } catch (error) {
+      this.#typingTickets.delete(userId);
+      this.#logger.warn?.('[dsh-message-weixin] typing indicator failed:', error);
     }
   }
 }

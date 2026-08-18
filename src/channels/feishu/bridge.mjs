@@ -30,6 +30,7 @@ export class FeishuHarnessBridge {
   #acceptedMessageIds = new Set();
   #status;
   #allowedSenderOpenIds;
+  #botOpenId;
   #replyTimeoutMs;
   #logger;
 
@@ -40,6 +41,7 @@ export class FeishuHarnessBridge {
     state,
     status,
     allowedSenderOpenIds = new Set(),
+    botOpenId,
     replyTimeoutMs = 600000,
     logger = console,
   }) {
@@ -49,6 +51,7 @@ export class FeishuHarnessBridge {
     this.#state = state;
     this.#status = status;
     this.#allowedSenderOpenIds = allowedSenderOpenIds;
+    this.#botOpenId = botOpenId;
     this.#replyTimeoutMs = replyTimeoutMs;
     this.#logger = logger;
   }
@@ -56,7 +59,8 @@ export class FeishuHarnessBridge {
   accept(event) {
     const messageId = event?.message?.message_id;
     if (!messageId || isBotSender(event) || event?.message?.message_type !== 'text') return;
-    if (!isAllowedSender(event, this.#allowedSenderOpenIds)) {
+    if (!isAllowedSender(event, this.#allowedSenderOpenIds, this.#botOpenId)) {
+      if (event?.message?.chat_type === 'group') return;
       this.#status.messagesRejected += 1;
       this.#status.lastRejectedAt = new Date().toISOString();
       this.#logger.warn?.('[bridge] ignored a message from a sender outside the allowlist');

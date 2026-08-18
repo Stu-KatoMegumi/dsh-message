@@ -22,7 +22,7 @@ export function createBridgeStatus({ allowedSenderCount = 1 } = {}) {
     lastRejectedAt: null,
     lastError: null,
     agentPreset: 'standard',
-    authorizationMode: 'sender-open-id-allowlist',
+    authorizationMode: 'private-allowlist-group-mention',
     allowedSenderCount,
   };
 }
@@ -39,6 +39,7 @@ export class FeishuRuntime {
   #appSecret;
   #domain;
   #ownerOpenIds;
+  #botOpenId;
   #harness;
   #state;
   #replyTimeoutMs;
@@ -57,6 +58,7 @@ export class FeishuRuntime {
     domain = 'feishu',
     ownerOpenId,
     ownerOpenIds,
+    botOpenId,
     harness,
     state,
     replyTimeoutMs = 600000,
@@ -76,6 +78,7 @@ export class FeishuRuntime {
     this.#appSecret = appSecret;
     this.#domain = domain;
     this.#ownerOpenIds = normalizedOwners;
+    this.#botOpenId = typeof botOpenId === 'string' ? botOpenId : null;
     this.#harness = harness;
     this.#state = state;
     this.#replyTimeoutMs = replyTimeoutMs;
@@ -130,6 +133,7 @@ export class FeishuRuntime {
         state: this.#state,
         status: this.#status,
         allowedSenderOpenIds: new Set(this.#ownerOpenIds),
+        botOpenId: this.#botOpenId,
         replyTimeoutMs: this.#replyTimeoutMs,
         logger: this.#logger,
       });

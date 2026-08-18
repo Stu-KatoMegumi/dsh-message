@@ -253,6 +253,50 @@ export function createWeixinApi({ fetchImpl = fetch } = {}) {
       return true;
     },
 
+    async getTypingTicket({ baseUrl, token, userId, contextToken, signal }) {
+      const recipient = nonEmptyString(userId);
+      if (!recipient) throw new TypeError('userId is required');
+      const response = await requestJson(fetchImpl, {
+        method: 'POST',
+        baseUrl,
+        endpoint: 'ilink/bot/getconfig',
+        token,
+        signal,
+        body: {
+          ilink_user_id: recipient,
+          context_token: nonEmptyString(contextToken) ?? '',
+          base_info: baseInfo(),
+        },
+      });
+      if (response?.ret !== undefined && response.ret !== 0) {
+        throw new WeixinApiError('typing-ticket-rejected', '微信服务拒绝了输入状态凭据请求。');
+      }
+      return nonEmptyString(response?.typing_ticket);
+    },
+
+    async sendTyping({ baseUrl, token, userId, typingTicket, active, signal }) {
+      const recipient = nonEmptyString(userId);
+      const ticket = nonEmptyString(typingTicket);
+      if (!recipient || !ticket) throw new TypeError('userId and typingTicket are required');
+      const response = await requestJson(fetchImpl, {
+        method: 'POST',
+        baseUrl,
+        endpoint: 'ilink/bot/sendtyping',
+        token,
+        signal,
+        body: {
+          ilink_user_id: recipient,
+          typing_ticket: ticket,
+          status: active ? 1 : 2,
+          base_info: baseInfo(),
+        },
+      });
+      if (response?.ret !== undefined && response.ret !== 0) {
+        throw new WeixinApiError('typing-rejected', '微信服务拒绝了输入状态更新。');
+      }
+      return true;
+    },
+
     async notifyStart({ baseUrl, token, signal }) {
       const response = await requestJson(fetchImpl, {
         method: 'POST',

@@ -49,7 +49,18 @@ export function isBotSender(event) {
   return event?.sender?.sender_type === 'bot';
 }
 
-export function isAllowedSender(event, allowedOpenIds) {
+export function mentionsBot(event, botOpenId) {
+  if (event?.message?.chat_type !== 'group'
+    || typeof botOpenId !== 'string'
+    || !botOpenId) return false;
+  return (event.message.mentions ?? []).some(
+    (mention) => mention?.id?.open_id === botOpenId,
+  );
+}
+
+export function isAllowedSender(event, allowedOpenIds, botOpenId) {
+  if (event?.message?.chat_type === 'group') return mentionsBot(event, botOpenId);
+  if (event?.message?.chat_type !== 'p2p') return false;
   if (!allowedOpenIds || allowedOpenIds.size === 0) return false;
   if (allowedOpenIds.has('*')) return true;
   const senderOpenId = event?.sender?.sender_id?.open_id;
