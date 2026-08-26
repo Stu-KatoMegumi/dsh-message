@@ -21,7 +21,7 @@ function valueOf(result) {
 }
 
 function modelValue(choice) {
-  return choice ? `${choice.model}/${choice.reasoningEffort}` : ''
+  return choice ? `${choice.provider}/${choice.model}/${choice.reasoningEffort}` : ''
 }
 
 function SettingToggle({ name, label, description, checked, busy, onChange }) {
@@ -39,12 +39,12 @@ function SettingToggle({ name, label, description, checked, busy, onChange }) {
     }))
 }
 
-function ModelSelect({ name, label, description, value, options, busy, onChange }) {
+function ModelSelect({ name, label, description, value, options, busy, onChange, readOnly = false }) {
   return h('label', { className: 'dim-agentModelField' },
     h('span', { className: 'dim-agentFieldLabel' }, label),
     h('span', { className: 'dim-agentFieldHint' }, description),
     h('span', { className: 'dim-agentSelectWrap' },
-      h('select', { name, value, disabled: busy, onChange },
+      h('select', { name, value, disabled: busy || readOnly, onChange },
         options.map((option) => {
           const optionValue = modelValue(option)
           return h('option', { key: optionValue, value: optionValue }, optionValue)
@@ -116,10 +116,10 @@ export function AgentSettingsTab({ rpcCall }) {
 
   const settings = model.data.settings
   const options = model.data.modelOptions ?? []
-  const updateModel = (name, value) => {
-    const choice = options.find((option) => modelValue(option) === value)
-    if (choice) void invoke(ENDPOINTS.updateSettings, { settings: { [name]: choice } })
-  }
+  const routing = model.data.modelRouting
+  const routeLabel = (choice) => choice
+    ? `${choice.provider}/${choice.model} (${choice.reasoningEffort})`
+    : '未配置'
 
   return h('section', { className: 'dim-agentSettings' },
     h('header', { className: 'dim-agentHeader' },
@@ -150,22 +150,45 @@ export function AgentSettingsTab({ rpcCall }) {
         h('div', { className: 'dim-agentModelGrid' },
           h(ModelSelect, {
             name: 'fastModel',
-            label: '简单消息模型',
-            description: '短消息与普通聊天默认使用',
+            label: '快速路由模型',
+            description: '先以 off 档位判断任务复杂度',
             value: modelValue(settings.fastModel),
             options,
             busy,
-            onChange: (event) => updateModel('fastModel', event.target.value),
+            readOnly: true,
           }),
           h(ModelSelect, {
             name: 'complexModel',
-            label: '复杂任务模型',
-            description: '长消息、分析和执行类任务使用',
+            label: '深度路由模型',
+            description: '复杂任务自动切换到 xhigh',
             value: modelValue(settings.complexModel),
             options,
             busy,
-            onChange: (event) => updateModel('complexModel', event.target.value),
-          })))),
+            readOnly: true,
+          }),
+          h(ModelSelect, {
+            name: 'fallbackFastModel',
+            label: 'Flash 快速兜底',
+            description: 'Qwen 不可用时使用 off 档位',
+            value: modelValue(settings.fallbackFastModel),
+            options,
+            busy,
+            readOnly: true,
+          }),
+          h(ModelSelect, {
+            name: 'fallbackComplexModel',
+            label: 'Flash 深度兜底',
+            description: 'Qwen 不可用时使用 max 档位',
+            value: modelValue(settings.fallbackComplexModel),
+            options,
+            busy,
+            readOnly: true,
+          }))),
+        routing ? h('div', { className: 'dim-agentRoutingState' },
+          h('strong', null, `当前路由：${routing.active === 'fallback' ? 'Flash 兜底' : 'Qwen 主模型'}`),
+          h('small', null,
+            `主路由 ${routeLabel(routing.primary?.fast)} / ${routeLabel(routing.primary?.deep)}；`
+            + `兜底 ${routeLabel(routing.fallback?.fast)} / ${routeLabel(routing.fallback?.deep)}`)) : null),
 
     h('article', { className: 'dim-agentCard dim-surfaceCard' },
       h('div', { className: 'dim-agentCardHeader dim-agentPromptHeader' },

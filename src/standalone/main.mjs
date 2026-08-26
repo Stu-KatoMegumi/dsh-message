@@ -15,7 +15,7 @@ const dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectDir = path.resolve(dirname, '../..')
 const sessionCwd = path.resolve(process.env.WX_BOT_CWD || projectDir)
 const sessionDir = path.resolve(process.env.WX_BOT_SESSION_DIR || path.join(sessionCwd, 'session'))
-// config/.env 仅服务独立模式：进程环境变量优先，.env 只补充缺失项
+// config/.env 为本地覆盖：进程环境变量优先，.env 只补充缺失项
 loadEnvFile(path.join(projectDir, 'config', '.env'))
 const list = value => String(value || '').split(/[\s,;]+/).filter(Boolean)
 const flag = (value, fallback = true) => value == null ? fallback : !['0', 'false', 'off'].includes(String(value).toLowerCase())

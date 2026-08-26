@@ -93,6 +93,11 @@ export class BaseTransport {
     return model ? this._selectModel(sessionId, model) : null
   }
 
+  /** Ensure a standalone session uses the same Full Access invariant as the plugin host. */
+  async ensureFullAccess(sessionId) {
+    return this._ensureFullAccess?.(sessionId) ?? false
+  }
+
   async cancel(sessionId) {
     return this._cancel(sessionId)
   }
@@ -116,6 +121,7 @@ export class BaseTransport {
     timeoutMs = this.timeoutMs,
     slowMs = this.slowMs,
     onDelta = null,
+    onEvent = null,
   } = {}) {
     if (!this.started) this.start()
     const baseline = this.lastSeq.get(sessionId) ?? 0
@@ -127,6 +133,7 @@ export class BaseTransport {
         resolve,
         reject,
         onDelta: typeof onDelta === 'function' ? onDelta : null,
+        onEvent: typeof onEvent === 'function' ? onEvent : null,
         slowTimer: null,
         timeout: null,
       }
@@ -207,8 +214,31 @@ export class BaseTransport {
       state.turn = turn
     }
 
+    // Tool calls/results are observable side effects even when they produce
+    // no text delta. Surface them to the standalone engine so it can refuse
+    // to replay a potentially mutating request after a routing failure.
+    if (kind === 'tool/call' || kind === 'tool/result'
+      || kind === 'tool/code-dispatch' || kind === 'tool/code-dispatch-start') {
+      for (const waiter of this.waiters.values()) {
+        if (waiter.sessionId === sessionId && Number(event.seq ?? 0) > waiter.baseline) {
+          try { waiter.onEvent?.(kind, event) } catch (error) {
+            this.logger.warn('[dsh-message] stream event consumer failed:', error?.message ?? error)
+          }
+        }
+      }
+    }
+
     if (kind === 'assistant/chunk' || kind === 'assistant/delta' || kind === 'message/chunk') {
       const chunk = event?.data?.chunk ?? event?.chunk ?? event?.data
+      if (chunk?.type === 'tool-call-delta') {
+        for (const waiter of this.waiters.values()) {
+          if (waiter.sessionId === sessionId && Number(event.seq ?? 0) > waiter.baseline) {
+            try { waiter.onEvent?.('tool-call-delta', event) } catch (error) {
+              this.logger.warn('[dsh-message] stream event consumer failed:', error?.message ?? error)
+            }
+          }
+        }
+      }
       const delta = typeof chunk?.text === 'string' ? chunk.text : ''
       if (delta && (!chunk?.type || chunk.type === 'text-delta')) {
         state.text += delta

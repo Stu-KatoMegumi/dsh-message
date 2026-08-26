@@ -1,7 +1,9 @@
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { getAgentService } from '../../src/agent/service.mjs';
+import { loadEnvFile } from '../../src/core/envfile.mjs';
 import { migrateLegacyData } from '../../src/runtime/migrate.mjs';
 import { SILENT_LOGGER } from '../../src/runtime/silent-logger.mjs';
 import { apply as applyDingtalk } from './channels/dingtalk/index.mjs';
@@ -13,6 +15,7 @@ import { installAgentRpc } from './agent.mjs';
 
 export const name = 'dsh-message-host';
 export const inject = ['connection', 'credentials', 'webServer'];
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 
 function channelConfig(config, name, agent, root) {
   const channel = config[name] ?? {};
@@ -35,6 +38,14 @@ export function createMessageHostPlugin(internals = {}) {
     name,
     inject,
     async apply(ctx, config = {}) {
+      const envCandidates = config.envFile
+        ? [resolve(config.envFile)]
+        : [
+          resolve(moduleDirectory, '../..', 'config', '.env'),
+          resolve(moduleDirectory, '..', 'config', '.env'),
+          resolve(process.cwd(), 'config', '.env'),
+        ];
+      for (const envFile of envCandidates) if (loadEnvFile(envFile)) break;
       const dshHome = resolve(config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
       const root = resolve(config.dataDir ?? join(dshHome, 'integrations', 'dsh-message'));
       await migrateLegacyData({ dshHome, root });

@@ -499,6 +499,14 @@ export function createBotWorkspaceScope(harness, {
         return Object.freeze({
           shouldRotate: (key, sessionId) => agent.shouldRotate(scope(key), sessionId),
           beforeTurn: (key, options) => agent.beforeTurn(scope(key), { ...options, harness: target }),
+          afterFirstTurn: (key, options) => agent.afterFirstTurn?.(scope(key), {
+            ...options,
+            harness: target,
+          }),
+          onTurnError: (key, options) => agent.onTurnError?.(scope(key), {
+            ...options,
+            harness: target,
+          }),
           afterTurn: (key, options) => agent.afterTurn(scope(key), options),
         });
       }

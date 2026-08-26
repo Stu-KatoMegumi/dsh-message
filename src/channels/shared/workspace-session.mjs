@@ -38,9 +38,10 @@ export async function askInWorkspaceSession({
   askOptions,
 }) {
   while (true) {
+    let preparedMetadata = null;
+    const agent = harness.agentHooks;
     try {
       let sessionId = state.sessionFor(key);
-      const agent = harness.agentHooks;
       if (sessionId && agent?.shouldRotate(key, sessionId)) sessionId = null;
       let session = sessionId ? workspaceSession(harness, sessionId) : null;
       if (!session || !(await sessionExists(session, existsOptions))) {
@@ -51,7 +52,37 @@ export async function askInWorkspaceSession({
       const prepared = agent
         ? await agent.beforeTurn(key, { sessionId, text, askOptions })
         : { text, askOptions, metadata: null };
-      const answer = await session.ask(prepared.text, prepared.askOptions);
+      preparedMetadata = prepared.metadata;
+      let answer;
+      try {
+        answer = await session.ask(prepared.text, prepared.askOptions);
+        const retry = agent?.afterFirstTurn
+          ? await agent.afterFirstTurn(key, {
+            answer,
+            metadata: prepared.metadata,
+            harness,
+          })
+          : null;
+        if (retry) {
+          if (prepared.metadata) prepared.metadata.deepAskStarted = true;
+          answer = await session.ask(retry.text, retry.askOptions);
+        }
+      } catch (error) {
+        // A model-route outage is recoverable exactly once. Selection errors
+        // raised while preparing the deep route have already switched (or
+        // attempted to switch) inside afterFirstTurn, so do not switch again.
+        const mayRecover = !prepared.metadata?.retryStarted
+          || prepared.metadata?.deepAskStarted === true;
+        const retry = mayRecover && agent?.onTurnError
+          ? await agent.onTurnError(key, {
+            error,
+            metadata: prepared.metadata,
+            harness,
+          })
+          : null;
+        if (!retry) throw error;
+        answer = await session.ask(retry.text, retry.askOptions);
+      }
       return {
         sessionId,
         answer: agent
@@ -60,6 +91,13 @@ export async function askInWorkspaceSession({
       };
     } catch (error) {
       if (error?.code !== WORKSPACE_SESSION_STALE) throw error;
+      if (preparedMetadata && agent?.onTurnError) {
+        await agent.onTurnError(key, {
+          error,
+          metadata: preparedMetadata,
+          harness,
+        }).catch(() => {});
+      }
     }
   }
 }

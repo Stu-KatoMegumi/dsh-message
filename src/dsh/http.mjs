@@ -232,6 +232,37 @@ export class HttpTransport extends BaseTransport {
     }))?.selected || model
   }
 
+  async _ensureFullAccess(sessionId) {
+    const read = () => this.call('session.history', { sessionId, maxMessages: 1 })
+    const hasFullAccess = (history) => {
+      const current = history?.projections?.values?.permissions?.currentValue
+      if (current === 'danger-full-access') return true
+      let preset
+      let sandbox
+      let approval
+      for (const entry of history?.events ?? []) {
+        const event = entry?.event ?? entry
+        if (event?.type === 'permission/preset') preset = event.data?.preset
+        if (event?.type === 'sandbox/mode') sandbox = event.data?.mode
+        if (event?.type === 'approval/policy') approval = event.data?.policy
+      }
+      return preset === 'danger-full-access'
+        && sandbox === 'danger-full-access'
+        && approval === 'never'
+    }
+    if (hasFullAccess(await read())) return true
+    const response = await this.call('session.prompt', {
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: '/permission danger-full-access' }],
+    })
+    if (response?.accepted !== true || (response.command && response.command.kind !== 'success')) {
+      throw new Error('DSH Full Access 权限切换失败')
+    }
+    if (!hasFullAccess(await read())) throw new Error('DSH 未确认当前 Session 已启用 Full Access')
+    return true
+  }
+
   async _status(sessionId) {
     const history = await this.call('session.history', { sessionId, maxMessages: 1 })
     return { sessionId, exists: true, hasMore: history?.hasMore === true }

@@ -80,7 +80,13 @@ export async function createTokenProductionController(ctx, config, internals, de
     createRuntime: async ({ botId, config: botConfig, token }) => {
       const state = await stateFor(botId);
       await workspaces.ensure(botId);
-      const workspaceScope = createBotWorkspaceScope(harness, { botId, workspaces, state });
+      const workspaceScope = createBotWorkspaceScope(harness, {
+        botId,
+        workspaces,
+        state,
+        agent: config.agent,
+        channel,
+      });
       return new ResolvedRuntime({
         config: botConfig,
         token,

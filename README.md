@@ -103,7 +103,7 @@
 ### 统一对话体验
 
 - 模型回复中的独立 `---` 行会被解析为气泡分隔符；每段单独发送，分隔符不展示，单轮最多 10 条。
-- 简单消息与复杂任务可使用不同的模型 / 推理组合，默认分别为 `deepseek-v4-flash/off` 与 `deepseek-v4-flash/max`。
+- 首轮固定使用自建 `vllm/qwen3.8-27b-int8/off` 判断复杂度；需要深度执行时切换到 Qwen `xhigh`。Qwen 不可用时，仅在尚无输出或副作用的安全边界内切换到 `deepseek-official/deepseek-v4-flash`（快速 `off`、深度 `max`），并在 60 秒后自动探测回切。
 - 支持工作区与 Session 绑定，让每个机器人在明确的工作环境中执行任务。
 - 新消息、连接中断和异常状态都有对应的停止、重连与恢复路径。
 
@@ -281,3 +281,11 @@ npm run check
   <strong>DSH Message</strong><br>
   Five channels. One assistant. One continuous experience.
 </p>
+
+### 默认权限与模型路由
+
+消息渠道创建、恢复或绑定的每个 DSH Session，都会在业务消息前强制校验并切换为 `danger-full-access`（sandbox `danger-full-access` + approval `never`）。这会关闭人工审批拦截，请仅对已审计的机器人入口和工作区启用。
+
+首轮请求固定使用自建 `vllm/qwen3.8-27b-int8` 的 `off` 档位，由模型返回普通答案或严格的内部复杂度控制块；复杂任务随后使用 Qwen `xhigh` 重试。Qwen 服务在无输出、工具调用或其他副作用前失败时，单次切换到 `deepseek-official/deepseek-v4-flash` 兜底（`off` / `max`），并在 60 秒冷却后自动探测回切。模型选择由插件固定，设置页为只读。
+
+本地可在被 `.gitignore` 忽略的 `config/.env` 中覆盖路由变量；未提供时使用代码默认值，进程环境变量优先。插件模式和旧独立模式都会加载该文件。

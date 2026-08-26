@@ -17,10 +17,67 @@ import {
 } from './memory.mjs'
 import { localDateKey } from './store.mjs'
 
-const ACTION_RE = /(写|改|创建|生成|删除|移动|复制|运行|执行|启动|停止|安装|下载|上传|搜索|查询|查找|分析|总结|整理|重构|调试|测试|构建|打包|部署|提交|推送|合并|克隆|备份|翻译|转换|解压|代码|脚本|命令|文件|项目|docker|git|npm|pnpm|node|python|pip|ssh|sql|api)/i
+const QWEN_PROVIDER = 'vllm'
+const QWEN_MODEL = 'qwen3.8-27b-int8'
 const FLASH_PROVIDER = 'deepseek-official'
 const FLASH_MODEL = 'deepseek-v4-flash'
 const SESSION_VERSION = 3
+const CONTROL_START = '<dsh-message-control>'
+const CONTROL_END = '</dsh-message-control>'
+const CONTROL_PAYLOAD = JSON.stringify({ version: 1, action: 'retry_with_deep_reasoning' })
+const DEEP_RETRY_PROMPT = '[内部路由控制：复杂度判断已完成。请直接执行上一条用户任务，不要再次进行复杂度判断，不要输出 dsh-message-control 控制块。]'
+const ROUTER_PROMPT = `
+
+[内部复杂度路由规则]
+先判断上一条用户任务是否需要深度思考：
+- 如果不需要，直接正常回答或执行任务。
+- 如果需要，且当前尚未调用工具、发送外部请求或产生任何副作用，只输出下面完整控制块，不要输出解释、答案或 Markdown 围栏：
+${CONTROL_START}
+${CONTROL_PAYLOAD}
+${CONTROL_END}
+深度执行会由系统切换到对应的深度推理档位后重新进行。`
+const MODEL_FAILURE_CODES = new Set([
+  'model-not-found', 'provider-not-found', 'provider-unavailable', 'model-unavailable',
+  'model-routing-failed', 'llm-unavailable', 'upstream-unavailable',
+])
+
+export function parseDeepReasoningControl(value) {
+  const text = String(value ?? '').trim()
+  if (!text.startsWith(CONTROL_START) || !text.endsWith(CONTROL_END)) return false
+  const payload = text.slice(CONTROL_START.length, -CONTROL_END.length).trim()
+  if (payload.length > 256) return false
+  try {
+    const parsed = JSON.parse(payload)
+    const keys = Object.keys(parsed ?? {}).sort()
+    return keys.length === 2
+      && keys[0] === 'action' && keys[1] === 'version'
+      && parsed.version === 1 && parsed.action === 'retry_with_deep_reasoning'
+  } catch {
+    return false
+  }
+}
+
+function controlVisibleSnapshot(value) {
+  const text = String(value ?? '')
+  const trimmed = text.trimStart()
+  if (trimmed.startsWith(CONTROL_START)) {
+    if (parseDeepReasoningControl(trimmed)) return ''
+    const end = trimmed.indexOf(CONTROL_END)
+    if (end < 0) return ''
+  }
+  const index = text.indexOf(CONTROL_START)
+  return index >= 0 ? text.slice(0, index) : text
+}
+
+function isModelRouteError(error) {
+  const code = String(error?.code ?? error?.details?.code ?? '').toLowerCase()
+  if (MODEL_FAILURE_CODES.has(code)) return true
+  const status = Number(error?.status ?? error?.details?.status)
+  if ([408, 429, 500, 502, 503, 504].includes(status)) return true
+  if (['aborterror', 'cancelled', 'canceled', 'timeout'].includes(code)) return false
+  const message = String(error?.message ?? error ?? '').toLowerCase()
+  return /econnrefused|connection refused|fetch failed|timed? ?out|gateway timeout|service unavailable|temporarily unavailable|network|provider|model .*not found|model .*unavailable|upstream|qwen|vllm/.test(message)
+}
 
 function hashText(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex')
@@ -89,10 +146,11 @@ export function normalizeConfig(config = {}) {
     streamFlushMs: Math.max(500, Number(config.streamFlushMs ?? 30000)),
     maintenanceIntervalMs: Math.max(10_000, Number(config.maintenanceIntervalMs ?? 60_000)),
     complexAckText: String(config.complexAckText || '好的，我先思考一下，稍后给你结果。'),
-    // 模型策略固定为 flash；只按任务强度切换关闭思考和最高思考挡位。
-    // 不读取旧的 fastModel/complexModel，避免持久化配置或入口配置绕过策略。
-    fastModel: flashModel('off'),
-    complexModel: flashModel('max'),
+    // 模型路由固定为 Qwen 主通道，Flash 只作为服务故障兜底。
+    fastModel: qwenModel('off'),
+    complexModel: qwenModel('xhigh'),
+    fallbackFastModel: flashModel('off'),
+    fallbackComplexModel: flashModel('max'),
     outboxDir: path.resolve(config.outboxDir || path.join(config.sessionCwd || process.cwd(), 'outbox')),
     jobs: Array.isArray(config.jobs) ? config.jobs : [],
   }
@@ -106,12 +164,58 @@ function flashModel(reasoningEffort) {
   }
 }
 
-export function modelConfig(_env = process.env) {
+function qwenModel(reasoningEffort) {
   return {
-    fastModel: flashModel('off'),
-    complexModel: flashModel('max'),
+    provider: QWEN_PROVIDER,
+    model: QWEN_MODEL,
+    reasoningEffort,
+  }
+}
+
+export function modelConfig(_env = process.env) {
+  const primaryFast = configuredModel(_env,
+    'DSH_MESSAGE_FAST_MODEL_PROVIDER', 'DSH_MESSAGE_FAST_MODEL', 'DSH_MESSAGE_FAST_REASONING',
+    qwenModel('off'))
+  const primaryDeep = configuredModel(_env,
+    'DSH_MESSAGE_COMPLEX_MODEL_PROVIDER', 'DSH_MESSAGE_COMPLEX_MODEL', 'DSH_MESSAGE_COMPLEX_REASONING',
+    qwenModel('xhigh'))
+  const fallbackFast = configuredModel(_env,
+    'DSH_MESSAGE_FALLBACK_MODEL_PROVIDER', 'DSH_MESSAGE_FALLBACK_MODEL', 'DSH_MESSAGE_FALLBACK_FAST_REASONING',
+    flashModel('off'))
+  const fallbackDeep = configuredModel(_env,
+    'DSH_MESSAGE_FALLBACK_MODEL_PROVIDER', 'DSH_MESSAGE_FALLBACK_MODEL', 'DSH_MESSAGE_FALLBACK_COMPLEX_REASONING',
+    flashModel('max'))
+  if (String(_env.DSH_MESSAGE_PERMISSION_PRESET || '').trim()
+    && String(_env.DSH_MESSAGE_PERMISSION_PRESET).trim() !== 'danger-full-access') {
+    throw new Error('DSH_MESSAGE_PERMISSION_PRESET 必须为 danger-full-access')
+  }
+  return {
+    fastModel: primaryFast,
+    complexModel: primaryDeep,
+    fallbackFastModel: fallbackFast,
+    fallbackComplexModel: fallbackDeep,
     complexAckText: _env.WX_BOT_COMPLEX_ACK_TEXT || '好的，我先思考一下，稍后给你结果。',
   }
+}
+
+function configuredModel(env, providerKey, modelKey, reasoningKey, fallback) {
+  const clean = value => value === undefined || value === null || String(value).trim() === ''
+    ? '' : String(value).trim()
+  const provider = clean(env?.[providerKey])
+  const modelName = clean(env?.[modelKey])
+  const reasoningEffort = clean(env?.[reasoningKey])
+  if (!provider && !modelName && !reasoningEffort) return fallback
+  const candidate = {
+    provider: provider || fallback.provider,
+    model: modelName || fallback.model,
+    reasoningEffort: reasoningEffort || fallback.reasoningEffort,
+  }
+  if (candidate.provider !== fallback.provider
+    || candidate.model !== fallback.model
+    || candidate.reasoningEffort !== fallback.reasoningEffort) {
+    throw new Error(`${providerKey} 等模型配置只能使用 ${fallback.provider}/${fallback.model}/${fallback.reasoningEffort}`)
+  }
+  return candidate
 }
 
 export function renewalRecipients(users, { accessPolicy = 'pairing', allowlist = [] } = {}) {
@@ -278,6 +382,9 @@ export class Engine {
     this.started = false
     this.maintenanceTimer = null
     this.jobRuns = new Map()
+    this.fallbackUntil = 0
+    this.fallbackProbeEligible = false
+    this.fallbackProbeInFlight = false
   }
 
   start() {
@@ -444,8 +551,6 @@ export class Engine {
     this.activeTurns.set(userKey, { sessionId, gen })
 
     this.store.appendHistory(userKey, 'user', text, { historyKey: record.historyKey })
-    const complex = text.length > 40 || ACTION_RE.test(text)
-    if (complex && !this.config.streaming) await this.wechat.sendText(userKey, contextToken, this.config.complexAckText)
     const willInjectPrompt = Boolean(record.promptText)
     if (willInjectPrompt) {
       // Reserve the one-shot prompt before any awaited operation. This keeps
@@ -458,9 +563,37 @@ export class Engine {
         promptInjected: true,
       })
     }
+    let route = this.isFallbackActive() ? 'fallback' : 'primary'
+    let probeOwner = false
+    if (route === 'primary' && this.fallbackProbeEligible) {
+      if (this.fallbackProbeInFlight) route = 'fallback'
+      else {
+        this.fallbackProbeInFlight = true
+        this.fallbackProbeEligible = false
+        probeOwner = true
+      }
+    }
+    const selectedModel = deep => route === 'fallback'
+      ? (deep ? this.config.fallbackComplexModel : this.config.fallbackFastModel)
+      : (deep ? this.config.complexModel : this.config.fastModel)
     try {
-      await this.#selectModel(sessionId, complex ? this.config.complexModel : this.config.fastModel)
+      const fullAccess = await this.transport.ensureFullAccess?.(sessionId)
+      if (fullAccess === false && typeof this.transport.ensureFullAccess === 'function') {
+        throw new Error('DSH 未能启用 Full Access 权限')
+      }
+      try {
+        await this.#selectModel(sessionId, selectedModel(false))
+      } catch (error) {
+        if (route !== 'primary' || !isModelRouteError(error)) {
+          if (probeOwner) this.#releaseFallbackProbe()
+          throw error
+        }
+        this.#activateFallback()
+        route = 'fallback'
+        await this.#selectModel(sessionId, selectedModel(false))
+      }
     } catch (error) {
+      if (probeOwner) this.#releaseFallbackProbe()
       if (this.activeTurns.get(userKey)?.gen === gen) this.activeTurns.delete(userKey)
       if (willInjectPrompt && this.store.getUser(userKey)?.sessionId === sessionId) {
         this.store.touchUser(userKey, sessionId, contextToken, {
@@ -485,16 +618,81 @@ export class Engine {
     })
     const memoryStream = new MemoryStreamFilter()
     let askAccepted = false
+    let hadOutput = false
+    let hadSideEffect = false
+    let firstRaw = ''
     try {
-      const reply = await this.transport.ask(sessionId, this.#buildPromptMessage(text, record.promptText), {
+      const firstPrompt = this.#buildPromptMessage(text, record.promptText, true)
+      const askFirst = () => this.transport.ask(sessionId, firstPrompt, {
         timeoutMs: this.config.turnTimeoutMs,
-        slowMs: complex ? 0 : this.config.slowAckMs,
-        onDelta: delta => relay.push(memoryStream.push(delta)),
+        slowMs: this.config.slowAckMs,
+        // Hold the fast pass until its final text is known. This prevents an
+        // internal routing block from leaking into any channel's visible reply.
+        onDelta: delta => { if (delta) firstRaw += delta },
+        onEvent: kind => {
+          if (String(kind).startsWith('tool')) hadSideEffect = true
+        },
       })
+      let reply = ''
+      try {
+        reply = await askFirst()
+      } catch (error) {
+        if (route !== 'primary' || firstRaw.trim() || hadSideEffect || !isModelRouteError(error)) throw error
+        this.#activateFallback()
+        route = 'fallback'
+        await this.#selectModel(sessionId, selectedModel(false))
+        firstRaw = ''
+        reply = await askFirst()
+      }
       askAccepted = true
       if (this.activeTurns.get(userKey)?.gen !== gen) return
+      const firstText = String(reply || firstRaw || '')
+      const controlRequested = parseDeepReasoningControl(firstText)
+      if (controlRequested && hadSideEffect) {
+        const error = new Error('首轮已经产生执行痕迹，已停止自动深度重试，请重新发送任务')
+        error.code = 'deep-retry-side-effect'
+        throw error
+      }
+      const needsDeep = controlRequested
+      hadOutput = Boolean(firstText.trim() && !needsDeep)
+      if (needsDeep) {
+        if (!this.config.streaming) await this.wechat.sendText(userKey, contextToken, this.config.complexAckText)
+        const deepPrompt = `${DEEP_RETRY_PROMPT}\n\n${text}`
+        const askDeep = () => this.transport.ask(sessionId, deepPrompt, {
+          timeoutMs: this.config.turnTimeoutMs,
+          slowMs: 0,
+          onDelta: delta => {
+            if (delta) hadOutput = true
+            relay.push(memoryStream.push(delta))
+          },
+          onEvent: kind => {
+            if (String(kind).startsWith('tool')) hadSideEffect = true
+          },
+        })
+        try {
+          await this.#selectModel(sessionId, selectedModel(true))
+        } catch (error) {
+          if (route !== 'primary' || !isModelRouteError(error)) throw error
+          this.#activateFallback()
+          route = 'fallback'
+          await this.#selectModel(sessionId, selectedModel(true))
+        }
+        try {
+          reply = await askDeep()
+        } catch (error) {
+          if (route !== 'primary' || hadOutput || hadSideEffect || !isModelRouteError(error)) throw error
+          this.#activateFallback()
+          route = 'fallback'
+          await this.#selectModel(sessionId, selectedModel(true))
+          reply = await askDeep()
+        }
+      } else {
+        // A malformed or mixed control block is ordinary off-mode text; it is
+        // never interpreted as a routing command.
+        reply = firstText
+      }
       relay.push(memoryStream.finish())
-      const parsed = parseMemoryResponse(reply)
+      const parsed = parseMemoryResponse(controlVisibleSnapshot(needsDeep ? reply : firstText))
       let memoryResult = null
       try {
         memoryResult = applyMemoryOperations(this.memoryFile, parsed.operations, { date: this.now() })
@@ -529,21 +727,22 @@ export class Engine {
         throw error
       }
     } finally {
+      if (probeOwner) this.#releaseFallbackProbe()
       if (this.activeTurns.get(userKey)?.gen === gen) this.activeTurns.delete(userKey)
       if (this.config.typing) await this.wechat.setTyping(userKey, contextToken, false)
     }
   }
 
   /** 把新 session 首轮使用的 prompt 拼到用户消息前，后续轮次不重复发送。 */
-  #buildPromptMessage(text, prompt = '') {
-    if (!prompt) return text
-    return [
+  #buildPromptMessage(text, prompt = '', includeRouter = false) {
+    const message = prompt ? [
       '[系统设定（来自 dsh-message 定制，非用户输入，请始终遵守）]',
       prompt,
       '[设定结束]',
       '',
       `用户消息：\n${text}`,
-    ].join('\n')
+    ].join('\n') : text
+    return includeRouter ? `${message}${ROUTER_PROMPT}` : message
   }
 
   /** 设置页控制 API：prompt 文件列表（含内容与是否默认）。 */
@@ -665,12 +864,32 @@ export class Engine {
         || selected.provider !== spec.provider
         || selected.model !== spec.model
         || selected.reasoningEffort !== spec.reasoningEffort) {
-        throw new Error('DSH 未确认固定的 flash 模型和推理挡位')
+        throw new Error(`DSH 未确认固定模型 ${spec.provider}/${spec.model}/${spec.reasoningEffort}`)
       }
     } catch (error) {
       this.logger.warn(`[engine] 模型切换失败，本轮已停止：${error.message}`)
+      if (error && typeof error === 'object') error.modelRouteFailure = true
       throw error
     }
+  }
+
+  isFallbackActive() {
+    const now = this.now().getTime()
+    if (this.fallbackUntil > 0 && now >= this.fallbackUntil) {
+      this.fallbackUntil = 0
+      this.fallbackProbeEligible = true
+    }
+    return this.fallbackUntil > now
+  }
+
+  #activateFallback() {
+    this.fallbackUntil = this.now().getTime() + 60_000
+    this.fallbackProbeEligible = false
+    this.fallbackProbeInFlight = false
+  }
+
+  #releaseFallbackProbe() {
+    this.fallbackProbeInFlight = false
   }
 
   #userOf(sessionId) {

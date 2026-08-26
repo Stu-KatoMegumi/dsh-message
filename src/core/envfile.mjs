@@ -1,8 +1,9 @@
-// src/core/envfile.mjs — 极简 .env 加载（仅独立模式使用）
+// src/core/envfile.mjs — 极简 .env 加载（Host 插件与独立模式共用）
 //
 // 约定：进程已有的环境变量优先（不覆盖）；支持 # 注释、空行、KEY=VALUE、
 // 值两侧单/双引号去除。不引入 dotenv 依赖。
 
+// The Host plugin and standalone launcher both use this loader; process.env wins.
 import fs from 'node:fs'
 
 export function loadEnvFile(file) {
