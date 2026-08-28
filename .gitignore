@@ -3,10 +3,15 @@ session/
 state/
 *.tmp
 others
+
+# 注意：以下 test 目录被整体忽略，所以提交出去的功能改动不带回归测试
+# （含 test/model-failure.test.mjs 等 8 个文件 96 个用例）。
+# 这是既定策略，如需让他人/其他机器能 npm test 复现，必须显式 git add -f test/...
 test
 config/.env
 
 
 # agents 有关
+# CODEX.md 与 .codex/request/ 需求文档同样只留在本机，不随代码入库
 AGENTS.md
 .codex
