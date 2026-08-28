@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 
 import { adoptRegisteredWorkspaceSession } from '../shared/harness-session-binding.mjs';
+import { createTurnFailure } from '../../core/model-failure.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -71,6 +72,7 @@ export class HarnessReplyTracker {
   #latestText = '';
   #finished = false;
   #reason = null;
+  #sideEffect = false;
 
   constructor({ promptRpcId, afterSeq = -1 }) {
     this.#promptRpcId = promptRpcId;
@@ -87,6 +89,11 @@ export class HarnessReplyTracker {
 
   get reason() {
     return this.#reason;
+  }
+
+  /** Tool events are observable side effects: they disqualify an auto replay. */
+  get sideEffectSeen() {
+    return this.#sideEffect;
   }
 
   consume(entries) {
@@ -147,8 +154,10 @@ export class HarnessReplyTracker {
       }
 
       if (event.type === 'tool/call') {
+        this.#sideEffect = true;
         update = { type: 'tool', name: event.data?.name ?? '工具' };
       } else if (event.type === 'tool/result') {
+        this.#sideEffect = true;
         update = { type: 'status', text: '正在整理结果…' };
       }
     }
@@ -325,11 +334,16 @@ export class HarnessClient {
       }
       if (!tracker.finished) continue;
       if (tracker.answer) return tracker.answer;
-      throw new Error(
-        `Harness turn ended without a text reply${tracker.reason ? ` (${JSON.stringify(tracker.reason)})` : ''}`,
-      );
+      // No text at all: hand the router structured facts (turn-end kind, LLM
+      // failure code, empty body) so a dead primary channel can fall back.
+      throw createTurnFailure({
+        reason: tracker.reason,
+        emptyReply: true,
+        sideEffectSeen: tracker.sideEffectSeen,
+        context: 'DSH',
+      });
     }
-    throw new Error(`Harness reply timed out after ${Math.round(timeoutMs / 1_000)} seconds`);
+    throw createTurnFailure({ timeoutMs, context: 'DSH' });
   }
 
   stopManagedProcess() {

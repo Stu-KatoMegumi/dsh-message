@@ -81,7 +81,22 @@ export async function askInWorkspaceSession({
           })
           : null;
         if (!retry) throw error;
-        answer = await session.ask(retry.text, retry.askOptions);
+        try {
+          answer = await session.ask(retry.text, retry.askOptions);
+        } catch (replayError) {
+          // The recovery turn itself failed. Hand it back once so the shared
+          // agent can release the half-open primary probe and record why the
+          // message ended, then surface the real error to the channel. Without
+          // this, a failed probe would pin every later message to the fallback.
+          if (agent?.onTurnError) {
+            await agent.onTurnError(key, {
+              error: replayError,
+              metadata: prepared.metadata,
+              harness,
+            }).catch(() => undefined);
+          }
+          throw replayError;
+        }
       }
       return {
         sessionId,

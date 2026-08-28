@@ -16,9 +16,10 @@ import {
   writeMemoryFile,
 } from './memory.mjs'
 import { localDateKey } from './store.mjs'
+import { classifyModelFailure } from './model-failure.mjs'
 
 const QWEN_PROVIDER = 'vllm'
-const QWEN_MODEL = 'qwen3.8-27b-int8'
+const QWEN_MODEL = 'qwen38-flash-fp8'
 const FLASH_PROVIDER = 'deepseek-official'
 const FLASH_MODEL = 'deepseek-v4-flash'
 const SESSION_VERSION = 3
@@ -36,10 +37,6 @@ ${CONTROL_START}
 ${CONTROL_PAYLOAD}
 ${CONTROL_END}
 深度执行会由系统切换到对应的深度推理档位后重新进行。`
-const MODEL_FAILURE_CODES = new Set([
-  'model-not-found', 'provider-not-found', 'provider-unavailable', 'model-unavailable',
-  'model-routing-failed', 'llm-unavailable', 'upstream-unavailable',
-])
 
 export function parseDeepReasoningControl(value) {
   const text = String(value ?? '').trim()
@@ -67,16 +64,6 @@ function controlVisibleSnapshot(value) {
   }
   const index = text.indexOf(CONTROL_START)
   return index >= 0 ? text.slice(0, index) : text
-}
-
-function isModelRouteError(error) {
-  const code = String(error?.code ?? error?.details?.code ?? '').toLowerCase()
-  if (MODEL_FAILURE_CODES.has(code)) return true
-  const status = Number(error?.status ?? error?.details?.status)
-  if ([408, 429, 500, 502, 503, 504].includes(status)) return true
-  if (['aborterror', 'cancelled', 'canceled', 'timeout'].includes(code)) return false
-  const message = String(error?.message ?? error ?? '').toLowerCase()
-  return /econnrefused|connection refused|fetch failed|timed? ?out|gateway timeout|service unavailable|temporarily unavailable|network|provider|model .*not found|model .*unavailable|upstream|qwen|vllm/.test(message)
 }
 
 function hashText(value) {
@@ -584,7 +571,7 @@ export class Engine {
       try {
         await this.#selectModel(sessionId, selectedModel(false))
       } catch (error) {
-        if (route !== 'primary' || !isModelRouteError(error)) {
+        if (route !== 'primary' || !classifyModelFailure(error).failover) {
           if (probeOwner) this.#releaseFallbackProbe()
           throw error
         }
@@ -637,7 +624,8 @@ export class Engine {
       try {
         reply = await askFirst()
       } catch (error) {
-        if (route !== 'primary' || firstRaw.trim() || hadSideEffect || !isModelRouteError(error)) throw error
+        if (route !== 'primary' || firstRaw.trim() || hadSideEffect
+          || !classifyModelFailure(error, { hadSideEffect }).failover) throw error
         this.#activateFallback()
         route = 'fallback'
         await this.#selectModel(sessionId, selectedModel(false))
@@ -672,7 +660,7 @@ export class Engine {
         try {
           await this.#selectModel(sessionId, selectedModel(true))
         } catch (error) {
-          if (route !== 'primary' || !isModelRouteError(error)) throw error
+          if (route !== 'primary' || !classifyModelFailure(error).failover) throw error
           this.#activateFallback()
           route = 'fallback'
           await this.#selectModel(sessionId, selectedModel(true))
@@ -680,7 +668,8 @@ export class Engine {
         try {
           reply = await askDeep()
         } catch (error) {
-          if (route !== 'primary' || hadOutput || hadSideEffect || !isModelRouteError(error)) throw error
+          if (route !== 'primary' || hadOutput || hadSideEffect
+            || !classifyModelFailure(error, { hadSideEffect }).failover) throw error
           this.#activateFallback()
           route = 'fallback'
           await this.#selectModel(sessionId, selectedModel(true))

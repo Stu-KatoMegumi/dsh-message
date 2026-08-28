@@ -1,5 +1,7 @@
 import crypto from 'node:crypto'
 
+import { createTurnFailure } from '../core/model-failure.mjs'
+
 const DEFAULT_TIMEOUT = 15 * 60 * 1000
 const DEFAULT_SLOW = 4000
 
@@ -148,7 +150,7 @@ export class BaseTransport {
         clearTimeout(waiter.slowTimer)
         void Promise.resolve(this._cancel(sessionId)).catch(() => {})
         this.onStall(sessionId)
-        reject(new Error(`DSH session timed out after ${timeoutMs} ms`))
+        reject(createTurnFailure({ timeoutMs }))
       }, timeoutMs)
       this.waiters.set(key, waiter)
     })
@@ -208,7 +210,7 @@ export class BaseTransport {
     const turn = eventTurn(event)
     let state = this.turns.get(sessionId)
     if (!state || (turn != null && state.turn != null && String(state.turn) !== String(turn))) {
-      state = { turn, text: '' }
+      state = { turn, text: '', sideEffect: false }
       this.turns.set(sessionId, state)
     } else if (turn != null && state.turn == null) {
       state.turn = turn
@@ -219,6 +221,7 @@ export class BaseTransport {
     // to replay a potentially mutating request after a routing failure.
     if (kind === 'tool/call' || kind === 'tool/result'
       || kind === 'tool/code-dispatch' || kind === 'tool/code-dispatch-start') {
+      state.sideEffect = true
       for (const waiter of this.waiters.values()) {
         if (waiter.sessionId === sessionId && Number(event.seq ?? 0) > waiter.baseline) {
           try { waiter.onEvent?.(kind, event) } catch (error) {
@@ -264,13 +267,24 @@ export class BaseTransport {
       waiter.sessionId === sessionId && (seq === 0 || seq > waiter.baseline)
     ))
     const reason = event?.data?.reason ?? event?.reason
-    const failed = reason?.kind === 'error' || reason?.type === 'error' || reason?.error
+    const described = reason && typeof reason === 'object'
+      ? (reason.kind ?? reason.type ?? 'unknown')
+      : 'unknown'
+    const failed = described === 'error' || Boolean(reason?.error)
+    // A turn that ends "completed" with an empty body is an outage signal for
+    // the model channel (reasoning-only output, empty content), not a success.
+    const text = typeof state?.text === 'string' ? state.text.trim() : ''
     for (const [key, waiter] of entries) {
       this.waiters.delete(key)
       clearTimeout(waiter.timeout)
       clearTimeout(waiter.slowTimer)
-      if (failed) waiter.reject(new Error(reason?.message || reason?.error?.message || reason?.error || 'DSH turn failed'))
-      else waiter.resolve(state?.text || '')
+      if (failed || !text) {
+        waiter.reject(createTurnFailure({
+          reason,
+          emptyReply: !text,
+          sideEffectSeen: state?.sideEffect === true,
+        }))
+      } else waiter.resolve(text)
     }
     this.turns.delete(sessionId)
   }

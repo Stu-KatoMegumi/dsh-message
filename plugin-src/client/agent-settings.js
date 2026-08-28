@@ -169,7 +169,7 @@ export function AgentSettingsTab({ rpcCall }) {
           h(ModelSelect, {
             name: 'fallbackFastModel',
             label: 'Flash 快速兜底',
-            description: 'Qwen 不可用时使用 off 档位',
+            description: 'Qwen-3.8-Flash 不可用时使用 off 档位',
             value: modelValue(settings.fallbackFastModel),
             options,
             busy,
@@ -178,17 +178,20 @@ export function AgentSettingsTab({ rpcCall }) {
           h(ModelSelect, {
             name: 'fallbackComplexModel',
             label: 'Flash 深度兜底',
-            description: 'Qwen 不可用时使用 max 档位',
+            description: 'Qwen-3.8-Flash 不可用时使用 max 档位',
             value: modelValue(settings.fallbackComplexModel),
             options,
             busy,
             readOnly: true,
           }))),
         routing ? h('div', { className: 'dim-agentRoutingState' },
-          h('strong', null, `当前路由：${routing.active === 'fallback' ? 'Flash 兜底' : 'Qwen 主模型'}`),
+          h('strong', null, `当前路由：${routing.active === 'fallback' ? 'Flash 兜底' : 'Qwen-3.8-Flash 主模型'}`),
           h('small', null,
             `主路由 ${routeLabel(routing.primary?.fast)} / ${routeLabel(routing.primary?.deep)}；`
-            + `兜底 ${routeLabel(routing.fallback?.fast)} / ${routeLabel(routing.fallback?.deep)}`)) : null),
+            + `兜底 ${routeLabel(routing.fallback?.fast)} / ${routeLabel(routing.fallback?.deep)}`
+            + (routing.lastFailure
+              ? `；最近异常 ${routing.lastFailure.reason}${routing.lastFailure.emptyReply ? '（空回复）' : ''}`
+              : ''))) : null),
 
     h('article', { className: 'dim-agentCard dim-surfaceCard' },
       h('div', { className: 'dim-agentCardHeader dim-agentPromptHeader' },

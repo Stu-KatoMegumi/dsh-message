@@ -23,10 +23,11 @@ import {
   writeMemoryFile,
 } from '../core/memory.mjs'
 import { localDateKey, safeKey } from '../core/store.mjs'
+import { classifyModelFailure, failureRecord } from '../core/model-failure.mjs'
 
 const SESSION_VERSION = 1
 const PRIMARY_PROVIDER = 'vllm'
-const PRIMARY_MODEL = 'qwen3.8-27b-int8'
+const PRIMARY_MODEL = 'qwen38-flash-fp8'
 const FALLBACK_PROVIDER = 'deepseek-official'
 const FALLBACK_MODEL = 'deepseek-v4-flash'
 const FULL_ACCESS_PRESET = 'danger-full-access'
@@ -59,16 +60,6 @@ export const MODEL_OPTIONS = Object.freeze([
   PRIMARY_DEEP_MODEL,
   FALLBACK_FAST_MODEL,
   FALLBACK_DEEP_MODEL,
-])
-
-const MODEL_FAILURE_CODES = new Set([
-  'model-not-found',
-  'provider-not-found',
-  'provider-unavailable',
-  'model-unavailable',
-  'model-routing-failed',
-  'llm-unavailable',
-  'upstream-unavailable',
 ])
 
 function sameModel(left, right) {
@@ -108,19 +99,10 @@ function modelFailure(message, cause) {
   const error = new Error(message)
   error.code = 'model-routing-failed'
   error.modelRouteFailure = true
+  const upstreamCode = String(cause?.code ?? cause?.details?.code ?? '').trim()
+  if (upstreamCode) error.upstreamCode = upstreamCode
   error.cause = cause
   return error
-}
-
-function isModelRouteError(error) {
-  if (error?.modelRouteFailure === true) return true
-  const code = String(error?.code ?? error?.details?.code ?? '').toLowerCase()
-  if (MODEL_FAILURE_CODES.has(code)) return true
-  const status = Number(error?.status ?? error?.details?.status)
-  if ([408, 429, 500, 502, 503, 504].includes(status)) return true
-  if (['aborterror', 'cancelled', 'canceled', 'timeout'].includes(code)) return false
-  const message = String(error?.message ?? error ?? '').toLowerCase()
-  return /econnrefused|connection refused|fetch failed|timed? ?out|gateway timeout|service unavailable|temporarily unavailable|network|provider|model .*not found|model .*unavailable|upstream|qwen|vllm/.test(message)
 }
 
 function permissionValue(history) {
@@ -248,6 +230,7 @@ export class AgentService {
     this.fallbackUntil = 0
     this.probeEligible = false
     this.probeInFlight = false
+    this.lastFailure = null
     ensurePromptFiles(this.defaultPromptDir, this.promptDir)
     ensureMemoryFile(this.defaultPromptDir, this.memoryFile)
   }
@@ -309,6 +292,7 @@ export class AgentService {
         fallbackUntil: this.fallbackUntil || null,
         primary: { fast: this.models.fastModel, deep: this.models.complexModel },
         fallback: { fast: this.models.fallbackFastModel, deep: this.models.fallbackComplexModel },
+        lastFailure: this.lastFailure,
       },
       prompts: this.listPrompts(),
     }
@@ -398,7 +382,12 @@ export class AgentService {
       await this.#selectModel(harness, sessionId, route === 'fallback'
         ? this.models.fallbackFastModel : this.models.fastModel)
     } catch (error) {
-      if (route !== 'primary' || !isModelRouteError(error)) throw error
+      const classification = classifyModelFailure(error)
+      if (route !== 'primary' || !classification.failover) {
+        this.#recordFailure(error, { reason: classification.reason, route, sessionId })
+        throw error
+      }
+      this.#recordFailure(error, { reason: classification.reason, route, sessionId, switched: true })
       this.#activateFallback()
       route = 'fallback'
       metadata.route = route
@@ -439,7 +428,12 @@ export class AgentService {
       await this.#selectModel(harness, metadata.sessionId, route === 'fallback'
         ? this.models.fallbackComplexModel : this.models.complexModel)
     } catch (error) {
-      if (route !== 'primary' || !isModelRouteError(error)) throw error
+      const classification = classifyModelFailure(error)
+      if (route !== 'primary' || !classification.failover) {
+        this.#recordFailure(error, { reason: classification.reason, route, sessionId: metadata.sessionId })
+        throw error
+      }
+      this.#recordFailure(error, { reason: classification.reason, route, sessionId: metadata.sessionId, switched: true })
       this.#activateFallback()
       route = 'fallback'
       metadata.route = route
@@ -453,15 +447,30 @@ export class AgentService {
 
   async onTurnError(_scope, { error, metadata, harness }) {
     if (!metadata) return null
-    if (metadata.recoveryAttempted || metadata.hadSideEffect || metadata.route !== 'primary') {
+    if (metadata.recoveryAttempted || metadata.route !== 'primary') {
+      // The failover channel also failed (or this turn never owned the primary
+      // route). Never switch twice for one user message.
+      this.#recordFailure(error, {
+        reason: metadata.route === 'fallback' ? 'fallback-turn-failed' : 'not-primary-route',
+        route: metadata.route,
+        sessionId: metadata.sessionId,
+      })
       this.#releaseProbe(metadata)
       return null
     }
-    if (!isModelRouteError(error)) {
+    const classification = classifyModelFailure(error, { hadSideEffect: metadata.hadSideEffect })
+    if (!classification.failover) {
+      this.#recordFailure(error, { reason: classification.reason, route: 'primary', sessionId: metadata.sessionId })
       this.#releaseProbe(metadata)
       return null
     }
     metadata.recoveryAttempted = true
+    this.#recordFailure(error, {
+      reason: classification.reason,
+      route: 'primary',
+      sessionId: metadata.sessionId,
+      switched: true,
+    })
     this.#activateFallback()
     await this.#selectModel(harness, metadata.sessionId, metadata.deepUsed
       ? this.models.fallbackComplexModel : this.models.fallbackFastModel)
@@ -509,6 +518,17 @@ export class AgentService {
     if (!metadata?.probeOwner) return
     metadata.probeOwner = false
     this.probeInFlight = false
+  }
+
+  /** Keep a secret-free trace of why routing switched or a turn gave up. */
+  #recordFailure(error, { reason, route, sessionId = null, switched = false }) {
+    this.lastFailure = failureRecord(error, {
+      reason,
+      route,
+      sessionId,
+      switched,
+      at: this.now(),
+    })
   }
 
   async #selectModel(harness, sessionId, spec) {
