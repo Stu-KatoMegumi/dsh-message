@@ -27,7 +27,7 @@ import { classifyModelFailure, failureRecord } from '../core/model-failure.mjs'
 
 const SESSION_VERSION = 1
 const PRIMARY_PROVIDER = 'vllm'
-const PRIMARY_MODEL = 'qwen38-flash-fp8'
+const PRIMARY_MODEL = 'Qwen-3.8-Flash-Next'
 const FALLBACK_PROVIDER = 'deepseek-official'
 const FALLBACK_MODEL = 'deepseek-v4-flash'
 const FULL_ACCESS_PRESET = 'danger-full-access'

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 import { createLogger } from '../core/log.mjs'
+import { ensureImAgentPreset } from '../core/agent-preset.mjs'
 import { WeChatClient } from '../core/wechat.mjs'
 import { Store } from '../core/store.mjs'
 import { Engine, modelConfig } from '../core/engine.mjs'
@@ -32,7 +33,7 @@ export const Config = z.object({
   sessionDir: z.string().default(''),
   sessionCwd: z.string().default(''),
   workspaceTitle: z.string().default('微信会话'),
-  preset: z.string().default('standard'),
+  preset: z.string().default('dsh-message'),
   accessPolicy: z.union(['pairing', 'allowlist', 'disabled']).default('pairing'),
   allowlist: z.array(z.string()).default([]),
   streaming: z.boolean().default(true),
@@ -58,11 +59,16 @@ export function apply(ctx, config = {}) {
   const sessionDir = path.resolve(
     config.sessionDir || process.env.WX_BOT_SESSION_DIR || path.join(dshHome, 'channels', 'dsh-message'),
   )
-  const preset = config.preset || process.env.WX_BOT_PRESET || 'standard'
+  const preset = config.preset || process.env.WX_BOT_PRESET || 'dsh-message'
   // 插件模式与 DSH 共享同一个进程，绝不能覆盖 DSH 的全局 console（否则会连 DSH
   // 自己的 `dsh web: http://...` 启动横幅一起吞掉）。这里给插件自己的组件注入一个
   // 静默 logger，只对插件自身输出生效；需要排查时请改用独立模式 `npm start`。
   const silent = createLogger(false)
+  // IM 会话使用不含 ask_user_question 的专用预设；缺失时幂等写入 DSH 用户根
+  const presetResult = ensureImAgentPreset(dshHome, { logger: silent })
+  if (!presetResult.ok) {
+    silent.warn(`[dsh-message] 无法确保 DSH agent 预设 ${presetResult.preset}：${presetResult.reason}（会话创建将失败并报 UnknownPresetError）`)
+  }
   const engineConfig = {
     ...config,
     sessionCwd,

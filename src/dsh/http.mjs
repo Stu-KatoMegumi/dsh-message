@@ -17,7 +17,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 export class HttpTransport extends BaseTransport {
   constructor({
     base = 'http://127.0.0.1:3080',
-    preset = 'standard',
+    preset = 'dsh-message',
     sessionCwd = process.cwd(),
     workspaceTitle = '微信会话',
     fetchImpl = globalThis.fetch,

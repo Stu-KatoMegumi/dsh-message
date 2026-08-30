@@ -1,8 +1,10 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installTimestampLogging } from '../core/log.mjs'
 import { loadEnvFile } from '../core/envfile.mjs'
+import { ensureImAgentPreset } from '../core/agent-preset.mjs'
 import { WeChatClient } from '../core/wechat.mjs'
 import { Store } from '../core/store.mjs'
 import { Engine, modelConfig } from '../core/engine.mjs'
@@ -24,7 +26,7 @@ try { version = JSON.parse(fs.readFileSync(path.join(projectDir, 'version.json')
 
 const config = {
   dshBase: process.env.DSH_URL || 'http://127.0.0.1:3080',
-  preset: process.env.WX_BOT_PRESET || 'standard',
+  preset: process.env.WX_BOT_PRESET || 'dsh-message',
   sessionCwd,
   workspaceTitle: process.env.WX_BOT_WORKSPACE_TITLE || '微信会话',
   enabled: flag(process.env.WX_BOT_ENABLED),
@@ -63,6 +65,12 @@ try {
 }
 
 if (dshReady) {
+  // IM 会话使用不含 ask_user_question 的专用预设；缺失时幂等写入 DSH 用户根。
+  // 独立模式默认连接本机 DSH；若 DSH 位于其他机器/用户目录，请先手动放置预设。
+  const presetResult = ensureImAgentPreset(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))
+  if (!presetResult.ok) {
+    console.warn(`[dsh-message] 无法确保 DSH agent 预设 ${presetResult.preset}：${presetResult.reason}（会话创建将失败并报 UnknownPresetError）`)
+  }
   const store = new Store(sessionDir)
   const wechat = new WeChatClient({
     stateFile: store.botFile,

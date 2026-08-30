@@ -108,7 +108,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   const harness = new Harness({
     baseUrl: harnessOrigin(ctx.webServer, config.harnessBaseUrl),
     workspace: defaultWorkspace,
-    agentPreset: config.agentPreset ?? 'standard',
+    agentPreset: config.agentPreset ?? 'dsh-message',
     // This plugin is already hosted by a running DSH process. Starting a
     // second DSH would create a competing server and lifecycle.
     autostart: false,

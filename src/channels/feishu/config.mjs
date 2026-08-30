@@ -57,7 +57,7 @@ export function loadConfig() {
     appSecret,
     harnessBaseUrl: new URL(process.env.HARNESS_BASE_URL ?? 'http://127.0.0.1:3080'),
     harnessWorkspace: resolve(workspace),
-    harnessAgentPreset: process.env.HARNESS_AGENT_PRESET?.trim() || 'standard',
+    harnessAgentPreset: process.env.HARNESS_AGENT_PRESET?.trim() || 'dsh-message',
     harnessAutostart: bool('HARNESS_AUTOSTART', true),
     dshBin: process.env.DSH_BIN?.trim() || 'dsh',
     healthPort: Number.parseInt(process.env.BRIDGE_HEALTH_PORT ?? '3091', 10),

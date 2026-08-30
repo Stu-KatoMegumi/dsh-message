@@ -67,7 +67,7 @@ export async function createTokenProductionController(ctx, config, internals, de
   const harness = new ResolvedHarness({
     baseUrl: harnessOrigin(ctx.webServer, config.harnessBaseUrl),
     workspace: defaultWorkspace,
-    agentPreset: config.agentPreset ?? 'standard',
+    agentPreset: config.agentPreset ?? 'dsh-message',
     autostart: false,
     dshBin: config.dshBin ?? 'dsh',
     logger,

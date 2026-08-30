@@ -77,7 +77,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   const harness = new Harness({
     baseUrl: harnessOrigin(ctx.webServer, config.harnessBaseUrl),
     workspace: defaultWorkspace,
-    agentPreset: config.agentPreset ?? 'standard',
+    agentPreset: config.agentPreset ?? 'dsh-message',
     autostart: false,
     dshBin: config.dshBin ?? 'dsh',
     logger,

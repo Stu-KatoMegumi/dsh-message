@@ -1,0 +1,2 @@
+name: dsh-message IM 渠道（无选项卡提问）
+description: 复制自 DSH standard 预设；禁用 ask_user_question，渠道会话由模型直接以文字编号提问（回复 1/2、1A 2B）。由 dsh-message 插件安装/启动时确保存在。

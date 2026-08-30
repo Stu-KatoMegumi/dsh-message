@@ -19,7 +19,7 @@ import { localDateKey } from './store.mjs'
 import { classifyModelFailure } from './model-failure.mjs'
 
 const QWEN_PROVIDER = 'vllm'
-const QWEN_MODEL = 'qwen38-flash-fp8'
+const QWEN_MODEL = 'Qwen-3.8-Flash-Next'
 const FLASH_PROVIDER = 'deepseek-official'
 const FLASH_MODEL = 'deepseek-v4-flash'
 const SESSION_VERSION = 3

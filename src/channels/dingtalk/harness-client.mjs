@@ -204,7 +204,7 @@ export class HarnessClient {
   constructor({
     baseUrl,
     workspace,
-    agentPreset = 'standard',
+    agentPreset = 'dsh-message',
     autostart = false,
     dshBin = 'dsh',
     fetchImpl = fetch,

@@ -13,7 +13,7 @@ function workspaceFor(items, cwd, title) {
 }
 
 export class InprocTransport extends BaseTransport {
-  constructor(apiProxy, { preset = 'standard', sessionCwd = process.cwd(), workspaceTitle = '微信会话', ...options } = {}) {
+  constructor(apiProxy, { preset = 'dsh-message', sessionCwd = process.cwd(), workspaceTitle = '微信会话', ...options } = {}) {
     super(options)
     this.api = apiProxy
     this.preset = preset

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getAgentService } from '../../src/agent/service.mjs';
+import { ensureImAgentPreset } from '../../src/core/agent-preset.mjs';
 import { loadEnvFile } from '../../src/core/envfile.mjs';
 import { migrateLegacyData } from '../../src/runtime/migrate.mjs';
 import { SILENT_LOGGER } from '../../src/runtime/silent-logger.mjs';
@@ -47,6 +48,13 @@ export function createMessageHostPlugin(internals = {}) {
         ];
       for (const envFile of envCandidates) if (loadEnvFile(envFile)) break;
       const dshHome = resolve(config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
+      // IM 会话使用不含 ask_user_question 的专用预设；缺失时幂等写入 DSH 用户根
+      const presetResult = ensureImAgentPreset(dshHome, { logger: config.logger ?? SILENT_LOGGER });
+      if (!presetResult.ok) {
+        (config.logger ?? SILENT_LOGGER).warn?.(
+          `[dsh-message] 无法确保 DSH agent 预设 ${presetResult.preset}：${presetResult.reason}（会话创建将失败并报 UnknownPresetError）`,
+        );
+      }
       const root = resolve(config.dataDir ?? join(dshHome, 'integrations', 'dsh-message'));
       await migrateLegacyData({ dshHome, root });
       const agent = config.agent ?? getAgentService({

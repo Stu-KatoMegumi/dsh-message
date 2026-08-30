@@ -21,7 +21,7 @@ export function createBridgeStatus({ allowedSenderCount = 1 } = {}) {
     lastReplyAt: null,
     lastRejectedAt: null,
     lastError: null,
-    agentPreset: 'standard',
+    agentPreset: 'dsh-message',
     authorizationMode: 'private-allowlist-group-mention',
     allowedSenderCount,
   };

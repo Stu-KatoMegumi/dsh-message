@@ -103,7 +103,8 @@
 ### 统一对话体验
 
 - 模型回复中的独立 `---` 行会被解析为气泡分隔符；每段单独发送，分隔符不展示，单轮最多 10 条。
-- 首轮固定使用自建 `vllm/qwen38-flash-fp8/off`（Qwen-3.8-Flash）判断复杂度；需要深度执行时切换到 `xhigh`。主模型不可用时，仅在尚无输出或副作用的安全边界内切换到 `deepseek-official/deepseek-v4-flash`（快速 `off`、深度 `max`），并在 60 秒后自动探测回切。“回合结束但模型没有返回任何正文”同样按主通道故障处理并触发一次兜底。
+- **IM 渠道文字提问，不用 Web 选项卡**：需要用户确认、选择或补充信息时，IM 会话使用专用 agent 预设 `dsh-message`（复制自 DSH `standard` 并禁用 `ask_user_question`），模型直接在聊天里用编号列出选项（如"回复 1 或 2"、多选"1A 2B"），用户打字回复即可继续，手机端无需鼠标、不会卡在 Web 选项卡上。预设由插件启动时自动写入 `$DSH_HOME/.agent-presets/dsh-message/`（已存在则不改动）；DSH Web 自身会话仍使用 `standard`，选项卡提问不受影响。
+- 首轮固定使用自建 `vllm/Qwen-3.8-Flash-Next/off`（Qwen-3.8-Flash）判断复杂度；需要深度执行时切换到 `xhigh`。主模型不可用时，仅在尚无输出或副作用的安全边界内切换到 `deepseek-official/deepseek-v4-flash`（快速 `off`、深度 `max`），并在 60 秒后自动探测回切。“回合结束但模型没有返回任何正文”同样按主通道故障处理并触发一次兜底。
 - 支持工作区与 Session 绑定，让每个机器人在明确的工作环境中执行任务。
 - 新消息、连接中断和异常状态都有对应的停止、重连与恢复路径。
 
@@ -286,8 +287,8 @@ npm run check
 
 消息渠道创建、恢复或绑定的每个 DSH Session，都会在业务消息前强制校验并切换为 `danger-full-access`（sandbox `danger-full-access` + approval `never`）。这会关闭人工审批拦截，请仅对已审计的机器人入口和工作区启用。
 
-首轮请求固定使用自建 `vllm/qwen38-flash-fp8`（Qwen-3.8-Flash）的 `off` 档位，由模型返回普通答案或严格的内部复杂度控制块；复杂任务随后使用 `xhigh` 重试。主模型在无输出、工具调用或其他副作用前失败时，单次切换到 `deepseek-official/deepseek-v4-flash` 兜底（`off` / `max`），并在 60 秒冷却后自动探测回切。“回合正常结束但正文为空”（例如模型只产出 reasoning 内容）也按主通道故障处理，会触发一次兜底而不是静默无回复。模型选择由插件固定，设置页为只读；`status.modelRouting.lastFailure` 记录最近一次切换或失败原因（`reason`/`turnEndKind`/`llmCode`/`emptyReply`）。
+首轮请求固定使用自建 `vllm/Qwen-3.8-Flash-Next`（Qwen-3.8-Flash）的 `off` 档位，由模型返回普通答案或严格的内部复杂度控制块；复杂任务随后使用 `xhigh` 重试。主模型在无输出、工具调用或其他副作用前失败时，单次切换到 `deepseek-official/deepseek-v4-flash` 兜底（`off` / `max`），并在 60 秒冷却后自动探测回切。“回合正常结束但正文为空”（例如模型只产出 reasoning 内容）也按主通道故障处理，会触发一次兜底而不是静默无回复。模型选择由插件固定，设置页为只读；`status.modelRouting.lastFailure` 记录最近一次切换或失败原因（`reason`/`turnEndKind`/`llmCode`/`emptyReply`）。
 
-> 升级提示：主模型 id 已从 `qwen3.8-27b-int8` 迁移到 `qwen38-flash-fp8`。若本机 `config/.env` 仍写着旧 id，`AgentService` 会在启动时直接报错（不会静默退化成长期兜底），请同步修改。
+> 升级提示：主模型 id 的迁移路径为 `qwen3.8-27b-int8` → `qwen38-flash-fp8` → `Qwen-3.8-Flash-Next`（provider 仍为 `vllm`，服务地址由 DSH `settings.yaml` 的 `llm-pi-ai.providers.vllm.baseURL` 决定，插件不保存该地址）。若本机 `config/.env` 仍写着旧 id，`AgentService` 会在启动时直接报错（不会静默退化成长期兜底），请同步修改。
 
 本地可在被 `.gitignore` 忽略的 `config/.env` 中覆盖路由变量；未提供时使用代码默认值，进程环境变量优先。插件模式和旧独立模式都会加载该文件。
